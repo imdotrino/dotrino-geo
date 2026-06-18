@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
 
   geo:
-    image: ghcr.io/dotrino/dotrino-geo:latest
+    image: ghcr.io/imdotrino/dotrino-geo:latest
     # Para compilar de fuente en vez de bajar la imagen: comentá `image` y descomentá:
     # build: ./server
     environment:
