@@ -1,0 +1,41 @@
+{
+  "name": "@dotrino/geo",
+  "version": "0.2.0",
+  "description": "Cliente del índice geo de Dotrino (geo.dotrino.com): pins georreferenciados firmados con el vault, consulta por radio (PostGIS)",
+  "type": "module",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "geolocation",
+    "geospatial",
+    "postgis",
+    "geohash",
+    "dotrino",
+    "discovery",
+    "p2p"
+  ],
+  "author": "seyacat",
+  "license": "MIT",
+  "dependencies": {
+    "@dotrino/identity": "^0.10.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/imdotrino/dotrino-geo.git"
+  }
+}

@@ -1,0 +1,64 @@
+# Nodo geo autohospedado, turnkey. Un tercero hace:
+#   cp .env.docker.example .env   (y completa GEO_DOMAIN + GEO_DB_PASSWORD)
+#   docker compose up -d
+# y obtiene https://geo.sudominio.com con TLS automático (Caddy + Let's Encrypt).
+#
+# Requisitos: el dominio GEO_DOMAIN debe apuntar (A/AAAA) a este host, y los
+# puertos 80/443 deben estar abiertos (Caddy los usa para el challenge ACME).
+#
+# Para PROBAR sin dominio/TLS: comentá el servicio `caddy` y descomentá el
+# `ports` del servicio `geo` (expone 8090 en claro).
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: geo
+      POSTGRES_PASSWORD: ${GEO_DB_PASSWORD:-geo}
+      POSTGRES_DB: geo
+    volumes:
+      - geo-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geo -d geo"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  geo:
+    image: ghcr.io/dotrino/dotrino-geo:latest
+    # Para compilar de fuente en vez de bajar la imagen: comentá `image` y descomentá:
+    # build: ./server
+    environment:
+      PORT: 8090
+      DATABASE_URL: postgres://geo:${GEO_DB_PASSWORD:-geo}@db:5432/geo
+      GEO_MAX_TTL_MS: ${GEO_MAX_TTL_MS:-86400000}
+      GEO_RL_READ_PER_MIN: ${GEO_RL_READ_PER_MIN:-600}
+      GEO_RL_WRITE_PER_MIN: ${GEO_RL_WRITE_PER_MIN:-120}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # Para probar sin Caddy/TLS, descomentá:
+    # ports:
+    #   - "8090:8090"
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      GEO_DOMAIN: ${GEO_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - geo
+    restart: unless-stopped
+
+volumes:
+  geo-db:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,6 @@
+# Caddy saca y renueva el cert TLS de Let's Encrypt para tu dominio
+# automáticamente y reverse-proxea al servicio geo. El X-Forwarded-For que
+# necesita el rate-limit por IP lo setea Caddy por defecto.
+{$GEO_DOMAIN} {
+	reverse_proxy geo:8090
+}
