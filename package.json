@@ -32,7 +32,7 @@
   "author": "seyacat",
   "license": "MIT",
   "dependencies": {
-    "@dotrino/identity": "^0.10.0"
+    "@dotrino/identity": "0.10.0"
   },
   "repository": {
     "type": "git",
