@@ -1,5 +1,7 @@
 # @dotrino/geo
 
+> **Parte del ecosistema [Dotrino](https://dotrino.com).** Misión: aplicaciones que resuelven problemas comunes, respetando tu privacidad — sin anuncios, sin cookies, sin rastreo de datos, sin vender tu identidad a nadie.
+
 Índice de **descubrimiento georreferenciado** del ecosistema Dotrino:
 `geo.dotrino.com`. Una identidad publica un **pin firmado** (lat/lng + payload)
 con TTL corto; cualquiera consulta los pins dentro de un **radio** (PostGIS hace
