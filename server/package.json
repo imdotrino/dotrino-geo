@@ -1,13 +1,14 @@
 {
   "name": "dotrino-geo-server",
   "version": "0.1.0",
-  "description": "Servidor del índice geo geo.dotrino.com (HTTP/JSON + PostGIS)",
+  "description": "Servidor del \u00edndice geo geo.dotrino.com (HTTP/JSON + PostGIS)",
   "private": true,
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "type-check": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18"
@@ -16,5 +17,9 @@
     "pg": "^8.11.0"
   },
   "author": "seyacat",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "^22.0.0"
+  }
 }
