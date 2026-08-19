@@ -1,7 +1,7 @@
 {
   "name": "@dotrino/geo",
-  "version": "0.2.0",
-  "description": "Cliente del \u00edndice geo de Dotrino (geo.dotrino.com): pins georreferenciados firmados con el vault, consulta por radio (PostGIS)",
+  "version": "0.2.1",
+  "description": "Cliente del índice geo de Dotrino (geo.dotrino.com): pins georreferenciados firmados con el vault, consulta por radio (PostGIS)",
   "type": "module",
   "main": "src/index.js",
   "module": "src/index.js",
@@ -33,7 +33,7 @@
   "author": "seyacat",
   "license": "MIT",
   "dependencies": {
-    "@dotrino/identity": "0.33.0"
+    "@dotrino/identity": "0.53.0"
   },
   "repository": {
     "type": "git",
