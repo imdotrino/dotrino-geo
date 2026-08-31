@@ -89,17 +89,17 @@ function normalizeTags(tags) {
 // `fresh` (anti-replay por reloj) solo se exige a escrituras del cliente, no a
 // las replicadas (que pueden ser de hace rato y aún válidas dentro del TTL).
 async function applyPinEnvelope(data, signature, now, { fresh } = {}) {
-    if (!data || typeof data !== 'object') return { status: 400, error: 'falta data' };
-    if (!verifyEnvelope(data, signature)) return { status: 401, error: 'firma inválida' };
-    if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt requerido' };
-    if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'sobre vencido o reloj fuera de rango' };
+    if (!data || typeof data !== 'object') return { status: 400, error: 'missing data' };
+    if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
+    if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt required' };
+    if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'envelope expired or clock out of range' };
     const { lat, lng, geohash, payload, expiresAt } = data;
-    if (typeof lat !== 'number' || lat < -90 || lat > 90) return { status: 400, error: 'lat inválida' };
-    if (typeof lng !== 'number' || lng < -180 || lng > 180) return { status: 400, error: 'lng inválida' };
-    if (typeof geohash !== 'string' || !geohash) return { status: 400, error: 'geohash requerido' };
+    if (typeof lat !== 'number' || lat < -90 || lat > 90) return { status: 400, error: 'invalid lat' };
+    if (typeof lng !== 'number' || lng < -180 || lng > 180) return { status: 400, error: 'invalid lng' };
+    if (typeof geohash !== 'string' || !geohash) return { status: 400, error: 'geohash required' };
     // Cada nodo capa el TTL con SU reloj (la firma es sobre el expiresAt original).
     const cappedExpires = Math.min(typeof expiresAt === 'number' ? expiresAt : now, now + MAX_TTL_MS);
-    if (cappedExpires <= now) return { status: 400, error: 'expiresAt en el pasado' };
+    if (cappedExpires <= now) return { status: 400, error: 'expiresAt is in the past' };
     const { changed } = await db.applyPin({
         pubkeyId: pubkeyId(data.publickey), publickey: data.publickey,
         dataJson: JSON.stringify(data), signature,
@@ -113,11 +113,11 @@ async function applyPinEnvelope(data, signature, now, { fresh } = {}) {
 // Valida + aplica un TOMBSTONE firmado. Se conserva hasta now+MAX_TTL para tapar
 // la ventana de sincronización (que no resucite el pin desde otro nodo).
 async function applyTombstoneEnvelope(data, signature, now, { fresh } = {}) {
-    if (!data || typeof data !== 'object') return { status: 400, error: 'falta data' };
-    if (data.action !== 'remove') return { status: 400, error: 'action debe ser "remove"' };
-    if (!verifyEnvelope(data, signature)) return { status: 401, error: 'firma inválida' };
-    if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt requerido' };
-    if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'sobre vencido' };
+    if (!data || typeof data !== 'object') return { status: 400, error: 'missing data' };
+    if (data.action !== 'remove') return { status: 400, error: 'action must be "remove"' };
+    if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
+    if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt required' };
+    if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'envelope expired' };
     const { changed } = await db.applyTombstone({
         pubkeyId: pubkeyId(data.publickey), dataJson: JSON.stringify(data), signature,
         issuedAt: data.issuedAt, expiresAt: now + MAX_TTL_MS
@@ -145,7 +145,7 @@ async function handleDelete(req, res, now) {
 
 // Recibe un sobre empujado por un peer y lo aplica (sin re-empujar → sin loops).
 async function handleReplicate(req, res, now) {
-    if (REPL_TOKEN && req.headers['x-geo-token'] !== REPL_TOKEN) return send(res, 401, { error: 'token inválido' });
+    if (REPL_TOKEN && req.headers['x-geo-token'] !== REPL_TOKEN) return send(res, 401, { error: 'invalid token' });
     const body = (await readBody(req)) || {};
     const { kind, data, signature } = body;
     const r = kind === 'tombstone'
@@ -157,7 +157,7 @@ async function handleReplicate(req, res, now) {
 
 // Anti-entropía: devuelve los cambios locales con updated_at > since.
 async function handleSince(req, res, url) {
-    if (REPL_TOKEN && req.headers['x-geo-token'] !== REPL_TOKEN) return send(res, 401, { error: 'token inválido' });
+    if (REPL_TOKEN && req.headers['x-geo-token'] !== REPL_TOKEN) return send(res, 401, { error: 'invalid token' });
     const since = Number(url.searchParams.get('since') || 0) || 0;
     const { items, maxUpdatedAt } = await db.changesSince(since, SINCE_LIMIT);
     return send(res, 200, { items, maxUpdatedAt });
@@ -174,7 +174,7 @@ function pushToPeers(kind, data, signature) {
             method: 'POST',
             headers: { 'content-type': 'application/json', ...(REPL_TOKEN ? { 'x-geo-token': REPL_TOKEN } : {}) },
             body: payload, signal: ctrl.signal
-        }).catch(e => console.warn(`[geo] push a ${peer} falló:`, e.message)).finally(() => clearTimeout(t));
+        }).catch(e => console.warn(`[geo] push to ${peer} failed:`, e.message)).finally(() => clearTimeout(t));
     }
 }
 
@@ -182,22 +182,22 @@ async function handleGet(req, res, url, now) {
     const q = url.searchParams;
     // Number(null) === 0, así que un parámetro AUSENTE no puede pasar como 0.
     if (!q.has('lat') || !q.has('lng') || !q.has('r')) {
-        return send(res, 400, { error: 'lat, lng y r son requeridos' });
+        return send(res, 400, { error: 'lat, lng and r are required' });
     }
     const lat = Number(q.get('lat'));
     const lng = Number(q.get('lng'));
     const radiusMeters = Number(q.get('r'));
     let limit = Number(q.get('limit') || 50);
-    if (!Number.isFinite(lat) || lat < -90 || lat > 90) return send(res, 400, { error: 'lat inválida' });
-    if (!Number.isFinite(lng) || lng < -180 || lng > 180) return send(res, 400, { error: 'lng inválida' });
-    if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) return send(res, 400, { error: 'r inválido' });
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) return send(res, 400, { error: 'invalid lat' });
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) return send(res, 400, { error: 'invalid lng' });
+    if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) return send(res, 400, { error: 'invalid r' });
     limit = Math.max(1, Math.min(200, limit || 50));
 
     let filter = null;
     const rawFilter = q.get('filter');
     if (rawFilter) {
         try { filter = JSON.parse(rawFilter); }
-        catch (_) { return send(res, 400, { error: 'filter no es JSON válido' }); }
+        catch (_) { return send(res, 400, { error: 'filter is not valid JSON' }); }
     }
     // Búsqueda por tags (overlap): ?tags=comida,bici → pins con alguna de ellas.
     const tags = normalizeTags((q.get('tags') || '').split(',').map(s => s.trim()).filter(Boolean));
@@ -233,13 +233,13 @@ const server = http.createServer(async (req, res) => {
             const cls = req.method === 'GET' ? 'read' : 'write';
             const { allowed, retryAfter } = rl.take(cls, rl.clientIp(req), now);
             if (!allowed) {
-                return send(res, 429, { error: 'demasiadas solicitudes, reintentá más tarde' },
+                return send(res, 429, { error: 'too many requests, try again later' },
                     { 'retry-after': String(retryAfter) });
             }
             if (req.method === 'PUT') return await handlePut(req, res, now);
             if (req.method === 'DELETE') return await handleDelete(req, res, now);
             if (req.method === 'GET') return await handleGet(req, res, url, now);
-            return send(res, 405, { error: 'método no permitido' });
+            return send(res, 405, { error: 'method not allowed' });
         }
         return send(res, 404, { error: 'not found' });
     } catch (err) {
@@ -254,7 +254,7 @@ async function main() {
     setInterval(async () => {
         try {
             const n = await db.purgeExpired(Date.now());
-            if (n) console.log(`[geo] purgados ${n} pins expirados`);
+            if (n) console.log(`[geo] purged ${n} expired pins`);
         } catch (e) { console.error('[geo] purge error', e.message); }
         rl.prune(Date.now());
         here.purge(Date.now());   // bridge "here": purga blobs de presencia expirados
@@ -265,7 +265,7 @@ async function main() {
     // caídos). No re-empujamos lo aplicado → sin loops.
     const watermarks = new Map(); // peerUrl -> último updated_at visto de ese peer
     if (PEERS.length) {
-        console.log(`[geo] federación con ${PEERS.length} peer(s): ${PEERS.join(', ')}`);
+        console.log(`[geo] federating with ${PEERS.length} peer(s): ${PEERS.join(', ')}`);
         setInterval(async () => {
             for (const peer of PEERS) {
                 try {
@@ -283,12 +283,12 @@ async function main() {
                         else await applyPinEnvelope(it.data, it.signature, nowTs, { fresh: false });
                     }
                     if (typeof maxUpdatedAt === 'number' && maxUpdatedAt > since) watermarks.set(peer, maxUpdatedAt);
-                } catch (e) { console.warn(`[geo] anti-entropía con ${peer} falló:`, e.message); }
+                } catch (e) { console.warn(`[geo] anti-entropy with ${peer} failed:`, e.message); }
             }
         }, ANTI_ENTROPY_MS).unref();
     }
 
-    server.listen(PORT, () => console.log(`[geo] geo.dotrino.com escuchando en :${PORT}`));
+    server.listen(PORT, () => console.log(`[geo] geo.dotrino.com listening on :${PORT}`));
 }
 
 main().catch(err => { console.error('[geo] fatal', err); process.exit(1); });

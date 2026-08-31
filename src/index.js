@@ -37,10 +37,10 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000 // 10 min: pins efímeros por diseño
  */
 export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_BASE, fetch: f } = {}) {
   if (typeof signData !== 'function' || typeof getPublicKeyJwk !== 'function') {
-    throw new Error('dotrino-geo: signData y getPublicKeyJwk son requeridos (inyectalos desde el vault de identidad)')
+    throw new Error('dotrino-geo: signData and getPublicKeyJwk are required (inject them from the identity vault)')
   }
   const doFetch = f || (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null)
-  if (!doFetch) throw new Error('dotrino-geo: no hay fetch disponible; inyectalo en opts.fetch')
+  if (!doFetch) throw new Error('dotrino-geo: no fetch available; inject it in opts.fetch')
   const base = baseUrl.replace(/\/+$/, '')
 
   /**
@@ -94,7 +94,7 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
    */
   async function queryRadius ({ lat, lng, radiusMeters, limit = 50, filter, tags } = {}) {
     assertLatLng(lat, lng)
-    if (!(radiusMeters > 0)) throw new Error('dotrino-geo: radiusMeters debe ser > 0')
+    if (!(radiusMeters > 0)) throw new Error('dotrino-geo: radiusMeters must be > 0')
     const params = new URLSearchParams({
       lat: String(lat), lng: String(lng), r: String(radiusMeters), limit: String(limit)
     })
@@ -127,8 +127,8 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
 // ----- helpers -----------------------------------------------------------
 
 function assertLatLng (lat, lng) {
-  if (typeof lat !== 'number' || lat < -90 || lat > 90) throw new Error('dotrino-geo: lat inválida')
-  if (typeof lng !== 'number' || lng < -180 || lng > 180) throw new Error('dotrino-geo: lng inválida')
+  if (typeof lat !== 'number' || lat < -90 || lat > 90) throw new Error('dotrino-geo: invalid lat')
+  if (typeof lng !== 'number' || lng < -180 || lng > 180) throw new Error('dotrino-geo: invalid lng')
 }
 
 function round (n, decimals) {

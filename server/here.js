@@ -130,21 +130,21 @@ async function handleRevoke(req, res, now, readBody, send) {
     }
     const data = body && body.data;
     const signature = body && body.signature;
-    if (!data || typeof data !== 'object') return send(res, 400, { error: 'falta data' });
-    if (data.op !== 'revoke') return send(res, 400, { error: 'op debe ser "revoke"' });
+    if (!data || typeof data !== 'object') return send(res, 400, { error: 'missing data' });
+    if (data.op !== 'revoke') return send(res, 400, { error: 'op must be "revoke"' });
 
     const circleId = data.circleId;
     const nonce = data.nonce;
     if (typeof circleId !== 'string' || !circleId.includes(':')) {
-        return send(res, 400, { error: 'circleId inválido' });
+        return send(res, 400, { error: 'invalid circleId' });
     }
     if (typeof nonce !== 'string' || !nonce) {
-        return send(res, 400, { error: 'nonce requerido' });
+        return send(res, 400, { error: 'nonce required' });
     }
 
     // (1) firma válida sobre `data` (data.publickey embebido = firmante).
     if (typeof data.publickey !== 'string' || !verifyEnvelope(data, signature)) {
-        return send(res, 401, { error: 'firma inválida' });
+        return send(res, 401, { error: 'invalid signature' });
     }
 
     // (3) ligadura dueño↔círculo: el firmante debe ser el DUEÑO del circleId.
@@ -152,9 +152,9 @@ async function handleRevoke(req, res, now, readBody, send) {
     const ownerId = circleId.split(':')[0];
     let signerId;
     try { signerId = pubkeyIdSync(data.publickey); }
-    catch (_) { return send(res, 401, { error: 'publickey inválido' }); }
+    catch (_) { return send(res, 401, { error: 'invalid publickey' }); }
     if (signerId !== ownerId) {
-        return send(res, 403, { error: 'solo el dueño del círculo puede revocar', reason: 'owner-mismatch' });
+        return send(res, 403, { error: 'only the circle owner can revoke', reason: 'owner-mismatch' });
     }
 
     revoke(nonce);
@@ -177,39 +177,39 @@ async function handleHere(req, res, now, readBody, send) {
 
     // (1) Basic auth: username = circleId, password = base64url(cert).
     const basic = parseBasicAuth(req.headers['authorization']);
-    if (!basic) return send(res, 401, { error: 'auth requerido' }, { 'www-authenticate': 'Basic realm="here"' });
+    if (!basic) return send(res, 401, { error: 'auth required' }, { 'www-authenticate': 'Basic realm="here"' });
     const circleId = basic.user;
     if (typeof circleId !== 'string' || !circleId.includes(':')) {
-        return send(res, 401, { error: 'circleId inválido' });
+        return send(res, 401, { error: 'invalid circleId' });
     }
     const ownerId = circleId.split(':')[0];
 
     const cert = decodeCert(basic.pass);
-    if (!cert) return send(res, 401, { error: 'cert inválido' });
+    if (!cert) return send(res, 401, { error: 'invalid cert' });
 
     // (2) verifyDelegation: el dueño firmó el cert, está en ventana temporal y no revocado.
     //     expectedScope 'geo:publish' (publicar). Revocación por set en memoria.
     const v = await verifyDelegation({ cert, expectedScope: 'geo:publish', now, skewMs: HERE_SKEW_MS, revoked: isRevoked });
-    if (!v.ok) return send(res, 401, { error: 'cap inválida', reason: v.reason });
+    if (!v.ok) return send(res, 401, { error: 'invalid cap', reason: v.reason });
 
     // (2b) además el scope DEBE incluir 'geo:read:<circleId>' (leer a los amigos de ESTE círculo).
     if (!scopeIncludes(cert.scope, 'geo:read:' + circleId)) {
-        return send(res, 401, { error: 'cap inválida', reason: 'scope-read-circle' });
+        return send(res, 401, { error: 'invalid cap', reason: 'scope-read-circle' });
     }
 
     // (3) ligadura criptográfica círculo↔dueño: pubkeyId(cert.iss) === circleId.split(':')[0].
     //     Una cap de OTRO emisor (otro dueño / otro círculo) NO sirve para este circleId.
     let issuerId;
     try { issuerId = await pubkeyId(cert.iss); }
-    catch (_) { return send(res, 401, { error: 'iss inválido' }); }
+    catch (_) { return send(res, 401, { error: 'invalid iss' }); }
     if (issuerId !== ownerId) {
-        return send(res, 401, { error: 'cap inválida', reason: 'issuer-circle-mismatch' });
+        return send(res, 401, { error: 'invalid cap', reason: 'issuer-circle-mismatch' });
     }
 
     // memberId estable: id del dispositivo (sub del cert). El tid del body es solo cosmético.
     let memberId;
     try { memberId = await pubkeyId(cert.sub); }
-    catch (_) { return send(res, 401, { error: 'sub inválido' }); }
+    catch (_) { return send(res, 401, { error: 'invalid sub' }); }
 
     // --- body: un mensaje OwnTracks JSON (opaco). ---
     let body;
@@ -218,7 +218,7 @@ async function handleHere(req, res, now, readBody, send) {
         const msg = e && e.message ? e.message : 'body inválido';
         return send(res, 400, { error: msg });
     }
-    if (!body || typeof body !== 'object') return send(res, 400, { error: 'body inválido' });
+    if (!body || typeof body !== 'object') return send(res, 400, { error: 'invalid body' });
 
     purge(now);
 

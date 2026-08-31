@@ -1,7 +1,7 @@
 {
   "name": "dotrino-geo-server",
   "version": "0.1.0",
-  "description": "Servidor del \u00edndice geo geo.dotrino.com (HTTP/JSON + PostGIS)",
+  "description": "geo.dotrino.com index server (HTTP/JSON + PostGIS)",
   "private": true,
   "type": "commonjs",
   "main": "server.js",
