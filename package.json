@@ -1,6 +1,6 @@
 {
   "name": "@dotrino/geo",
-  "version": "0.2.2",
+  "version": "0.7.0",
   "description": "Dotrino geo index client (geo.dotrino.com): vault-signed georeferenced pins, radius queries (PostGIS)",
   "type": "module",
   "main": "src/index.js",

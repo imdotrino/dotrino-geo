@@ -59,6 +59,35 @@ function verifyEnvelope(data, signatureB64) {
  * Identificador estable y corto de una identidad (para PK de fila): SHA-256 del
  * JWK pubkey canónico, en hex. Evita usar el JWK entero (largo) como clave.
  */
+/**
+ * ¿ESTE SOBRE ES DE ESA IDENTIDAD? Sustituye a «¿lo firmó `data.publickey`?».
+ *
+ * Antes el autor y el firmante eran la misma llave, así que bastaba verificar contra
+ * `data.publickey`. Con varios aparatos ya no: firma el APARATO y el pin es de la
+ * IDENTIDAD. Verificar contra `data.publickey` obligaba a poner ahí la llave del aparato,
+ * y entonces publicar desde el teléfono y desde el PC creaba dos autores para la misma
+ * persona.
+ *
+ * La cadena de selladores ata una cosa con la otra, y la comprueba el PILAR — no se
+ * reimplementa aquí: es lógica de seguridad, y tenerla en dos sitios es tenerla mal en uno.
+ * Import dinámico porque el pilar es ESM y este servidor es CommonJS.
+ */
+let actaMod = null;
+async function acta() {
+    if (!actaMod) actaMod = await import('@dotrino/identity/acta');
+    return actaMod;
+}
+
+async function verifyPinBy(data, signature, signer, chain) {
+    // Sin cadena no se puede juzgar. Aceptar «el que dice ser» sin prueba es el agujero.
+    if (!Array.isArray(chain) || !chain.length || typeof signer !== 'string' || !signer) return false;
+    try {
+        const { verifySignedBy } = await acta();
+        const r = await verifySignedBy({ data, signature, publickey: signer, chain, expectedProfileId: data.publickey });
+        return !!r.ok;
+    } catch (_) { return false; }
+}
+
 function pubkeyId(publickeyJwkString) {
     try {
         const jwk = JSON.parse(publickeyJwkString);
@@ -69,4 +98,4 @@ function pubkeyId(publickeyJwkString) {
     }
 }
 
-module.exports = { verifyEnvelope, canonicalStringify, pubkeyId };
+module.exports = { verifyEnvelope, verifyPinBy, canonicalStringify, pubkeyId };

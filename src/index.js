@@ -30,8 +30,11 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000 // 10 min: pins efímeros por diseño
  * Crea un cliente del índice geo.
  *
  * @param {object} opts
- * @param {(data:object)=>Promise<string>} opts.signData   firma canónica → base64 (del vault)
- * @param {()=>Promise<string>} opts.getPublicKeyJwk        pubkey JWK string (del vault)
+ * @param {(data:object)=>Promise<{signature:string, publickey:string, chain:object[]}>} opts.signData
+ *   Firma del vault. Devuelve el paquete: quién firmó y la cadena que lo prueba.
+ * @param {()=>Promise<string>} opts.getPublicKeyJwk
+ *   MI IDENTIDAD (`profileId`), no la llave de este aparato: si pasas la del aparato,
+ *   publicar desde el teléfono y desde el PC crea dos autores distintos.
  * @param {string} [opts.baseUrl]                           default https://geo.dotrino.com
  * @param {typeof fetch} [opts.fetch]                       fetch inyectable (tests/SSR)
  */
@@ -58,6 +61,9 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
    */
   async function publishPin ({ lat, lng, payload = {}, tags, ttlMs = DEFAULT_TTL_MS, geohashPrecision = 7, now } = {}) {
     assertLatLng(lat, lng)
+    // `publickey` ES LA IDENTIDAD, no la llave del aparato que firma. Antes se ponía la
+    // del aparato, así que publicar desde el teléfono y desde el PC creaba dos «autores»
+    // distintos para la misma persona — y quien mirara el mapa vería dos.
     const publickey = await getPublicKeyJwk()
     const ts = now ?? Date.now()
     const data = {
@@ -71,11 +77,16 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
     }
     const cleanTags = normalizeTags(tags)
     if (cleanTags.length) data.tags = cleanTags
-    const signature = await signData(data)
+    const firma = await signData(data)
+    // Un vault viejo devuelve solo la firma; uno nuevo, el paquete con quién firmó y la
+    // cadena que prueba que ese firmante habla por esta identidad.
+    const sobre = typeof firma === 'string'
+      ? { data, signature: firma }
+      : { data, signature: firma.signature, ...(firma.publickey ? { signer: firma.publickey } : {}), ...(firma.chain?.length ? { chain: firma.chain } : {}) }
     const res = await doFetch(`${base}/pins`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ data, signature })
+      body: JSON.stringify(sobre)
     })
     return handle(res)
   }

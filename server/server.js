@@ -12,7 +12,7 @@
 
 const http = require('node:http');
 const db = require('./db.js');
-const { verifyEnvelope, pubkeyId } = require('./signature.js');
+const { verifyEnvelope, verifyPinBy, pubkeyId } = require('./signature.js');
 const rl = require('./rateLimiter.js');
 const here = require('./here.js');   // bridge CERRADO de círculos privados (POST /here)
 
@@ -88,9 +88,18 @@ function normalizeTags(tags) {
 // Valida + aplica un PIN firmado (usado por el cliente y por la replicación).
 // `fresh` (anti-replay por reloj) solo se exige a escrituras del cliente, no a
 // las replicadas (que pueden ser de hace rato y aún válidas dentro del TTL).
-async function applyPinEnvelope(data, signature, now, { fresh } = {}) {
+async function applyPinEnvelope(data, signature, now, { fresh, signer, chain } = {}) {
     if (!data || typeof data !== 'object') return { status: 400, error: 'missing data' };
-    if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
+    // El pin es de una IDENTIDAD y lo firma un APARATO. La cadena prueba que ese aparato
+    // habla por esa identidad; sin ella no se acepta, porque creerle el `publickey` a
+    // quien lo escribe es no comprobar nada.
+    //
+    // Se sigue aceptando el sobre de antes (firmante == autor) mientras queden clientes
+    // viejos publicando: ahí no hay nada que probar porque son la misma llave.
+    const conCadena = Array.isArray(chain) && chain.length
+    if (conCadena) {
+        if (!await verifyPinBy(data, signature, signer, chain)) return { status: 401, error: 'invalid signature or chain' };
+    } else if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
     if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt required' };
     if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'envelope expired or clock out of range' };
     const { lat, lng, geohash, payload, expiresAt } = data;
@@ -126,10 +135,12 @@ async function applyTombstoneEnvelope(data, signature, now, { fresh } = {}) {
 }
 
 async function handlePut(req, res, now) {
-    const { data, signature } = (await readBody(req)) || {};
-    const r = await applyPinEnvelope(data, signature, now, { fresh: true });
+    const { data, signature, signer, chain } = (await readBody(req)) || {};
+    const r = await applyPinEnvelope(data, signature, now, { fresh: true, signer, chain });
     if (r.status !== 200) return send(res, r.status, { error: r.error });
-    if (r.changed) pushToPeers('pin', data, signature);  // propagar a la federación
+    // A la federación va el sobre COMPLETO: el otro nodo tiene que poder comprobar lo
+    // mismo que comprobamos aquí, y sin la cadena no podría.
+    if (r.changed) pushToPeers('pin', data, signature, { signer, chain })
     return send(res, 200, { ok: true, expiresAt: r.cappedExpires, geohash: r.geohash });
 }
 
@@ -150,7 +161,7 @@ async function handleReplicate(req, res, now) {
     const { kind, data, signature } = body;
     const r = kind === 'tombstone'
         ? await applyTombstoneEnvelope(data, signature, now, { fresh: false })
-        : await applyPinEnvelope(data, signature, now, { fresh: false });
+        : await applyPinEnvelope(data, signature, now, { fresh: false, signer: body.signer, chain: body.chain });
     if (r.status !== 200) return send(res, r.status, { error: r.error });
     return send(res, 200, { ok: true, changed: r.changed });
 }
@@ -164,9 +175,11 @@ async function handleSince(req, res, url) {
 }
 
 // Empuja un sobre a todos los peers (fire-and-forget, con timeout).
-function pushToPeers(kind, data, signature) {
+function pushToPeers(kind, data, signature, extra) {
     if (!PEERS.length) return;
-    const payload = JSON.stringify({ kind, data, signature });
+    // `signer` y `chain` viajan también: el nodo de al lado comprueba lo mismo que
+    // comprobamos aquí, y sin la cadena no podría — se quedaría aceptando por confianza.
+    const payload = JSON.stringify({ kind, data, signature, ...(extra || {}) });
     for (const peer of PEERS) {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 5000);
