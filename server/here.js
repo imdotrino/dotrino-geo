@@ -125,7 +125,7 @@ async function handleRevoke(req, res, now, readBody, send) {
     let body;
     try { body = await readBody(req); }
     catch (e) {
-        const msg = e && e.message ? e.message : 'body inválido';
+        const msg = e && e.message ? e.message : 'invalid body';
         return send(res, 400, { error: msg });
     }
     const data = body && body.data;
@@ -215,7 +215,7 @@ async function handleHere(req, res, now, readBody, send) {
     let body;
     try { body = await readBody(req); }
     catch (e) {
-        const msg = e && e.message ? e.message : 'body inválido';
+        const msg = e && e.message ? e.message : 'invalid body';
         return send(res, 400, { error: msg });
     }
     if (!body || typeof body !== 'object') return send(res, 400, { error: 'invalid body' });
