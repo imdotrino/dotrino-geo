@@ -1,6 +1,6 @@
 {
   "name": "@dotrino/geo",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Dotrino geo index client (geo.dotrino.com): vault-signed georeferenced pins, radius queries (PostGIS)",
   "type": "module",
   "main": "src/index.js",
@@ -32,9 +32,6 @@
   ],
   "author": "seyacat",
   "license": "MIT",
-  "dependencies": {
-    "@dotrino/identity": "0.62.0"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/imdotrino/dotrino-geo.git"
@@ -42,5 +39,8 @@
   "devDependencies": {
     "typescript": "5.9.3",
     "@types/node": "^22.0.0"
+  },
+  "peerDependencies": {
+    "@dotrino/identity": ">=0.76.0"
   }
 }
