@@ -72,18 +72,25 @@ function verifyEnvelope(data, signatureB64) {
  * reimplementa aquí: es lógica de seguridad, y tenerla en dos sitios es tenerla mal en uno.
  * Import dinámico porque el pilar es ESM y este servidor es CommonJS.
  */
-let actaMod = null;
-async function acta() {
-    if (!actaMod) actaMod = await import('@dotrino/identity/acta');
-    return actaMod;
+let pilarMod = null;
+async function pilar() {
+    if (!pilarMod) pilarMod = await import('@dotrino/identity/assertion');
+    return pilarMod;
 }
 
-async function verifyPinBy(data, signature, signer, chain) {
+async function verifyPinBy(data, signature, signer, chain, audience) {
     // Sin cadena no se puede juzgar. Aceptar «el que dice ser» sin prueba es el agujero.
     if (!Array.isArray(chain) || !chain.length || typeof signer !== 'string' || !signer) return false;
+    // Y sin saber quién SOY yo tampoco: comprobar el destinatario contra un valor que no
+    // tengo es no comprobarlo. Se dice que no en vez de dejarlo pasar.
+    if (typeof audience !== 'string' || !audience) return false;
     try {
-        const { verifySignedBy } = await acta();
-        const r = await verifySignedBy({ data, signature, publickey: signer, chain, expectedProfileId: data.publickey });
+        // PARA QUIÉN ES ESTE PIN, además de de quién. Sin destinatario, un pin firmado para
+        // este índice lo aceptaba igual reputación, y al revés: la misma firma servía en
+        // los dos sitios. Lo comprueba el PILAR (`@dotrino/identity/assertion`), no este
+        // servidor: es lógica de seguridad y tenerla en dos sitios es tenerla mal en uno.
+        const { verifySignedFor } = await pilar();
+        const r = await verifySignedFor({ data, signature, publickey: signer, chain, audience, expectedProfileId: data.publickey });
         return !!r.ok;
     } catch (_) { return false; }
 }

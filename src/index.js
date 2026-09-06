@@ -45,6 +45,11 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
   const doFetch = f || (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null)
   if (!doFetch) throw new Error('dotrino-geo: no fetch available; inject it in opts.fetch')
   const base = baseUrl.replace(/\/+$/, '')
+  // PARA QUIÉN va lo que firmamos. Sale del `baseUrl` y no de una constante: quien
+  // autohospeda su índice tiene otro destinatario, y tenerlo fijo haría que un pin firmado
+  // para el nuestro sirviera ante el suyo — que es justo lo que el destinatario evita.
+  // Si el `baseUrl` no es una URL, revienta AQUÍ, al crear el cliente, y no al publicar.
+  const aud = new URL(base).origin
 
   /**
    * Publica (o reemplaza) el pin de esta identidad.
@@ -68,6 +73,7 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
     const ts = now ?? Date.now()
     const data = {
       publickey,
+      aud,
       lat: round(lat, 6),
       lng: round(lng, 6),
       geohash: encodeGeohash(lat, lng, geohashPrecision),
@@ -122,12 +128,19 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
    */
   async function removePin ({ now } = {}) {
     const publickey = await getPublicKeyJwk()
-    const data = { publickey, action: 'remove', issuedAt: now ?? Date.now() }
-    const signature = await signData(data)
+    const data = { publickey, aud, action: 'remove', issuedAt: now ?? Date.now() }
+    // MANDABA EL PAQUETE ENTERO EN `signature`. `signData` devuelve `{signature, publickey,
+    // chain}` desde hace versiones, y aquí se metía ese objeto donde el servidor espera la
+    // firma en base64: retirar un pin antes de que expirara respondía 401 siempre. Y sin la
+    // cadena tampoco se podía retirar el pin desde un aparato que no fuera el de la llave.
+    const firma = await signData(data)
+    const sobre = typeof firma === 'string'
+      ? { data, signature: firma }
+      : { data, signature: firma.signature, ...(firma.publickey ? { signer: firma.publickey } : {}), ...(firma.chain?.length ? { chain: firma.chain } : {}) }
     const res = await doFetch(`${base}/pins`, {
       method: 'DELETE',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ data, signature })
+      body: JSON.stringify(sobre)
     })
     return handle(res)
   }

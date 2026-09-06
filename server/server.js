@@ -33,6 +33,17 @@ const PURGE_INTERVAL_MS = 60 * 1000;
 const PEERS = (process.env.GEO_PEERS || '').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
 // Token compartido opcional para autenticar el tráfico nodo-a-nodo (/replicate, /since).
 const REPL_TOKEN = process.env.GEO_REPLICATION_TOKEN || '';
+/**
+ * PARA QUIÉN firman los clientes. Es la URL pública del SERVICIO, no la de este nodo: los
+ * nodos son réplicas de lo mismo y un pin replicado llega firmado para el servicio, así que
+ * si cada uno esperara su hostname la federación se caería. Se admite una lista para cuando
+ * el servicio responde en varios nombres.
+ *
+ * SIN VALOR NO SE ARRANCA. Poner aquí un `|| 'https://geo.dotrino.com'` sería decidir por
+ * quien autohospeda que sus clientes firman para nosotros; y aceptar cualquier destinatario
+ * cuando falta la variable es no comprobarlo, que es el agujero que esto viene a cerrar.
+ */
+const AUDIENCES = (process.env.GEO_AUDIENCE || '').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
 const ANTI_ENTROPY_MS = Number(process.env.GEO_ANTI_ENTROPY_MS || 30 * 1000);
 const SINCE_LIMIT = 500;
 
@@ -96,9 +107,14 @@ async function applyPinEnvelope(data, signature, now, { fresh, signer, chain } =
     //
     // Se sigue aceptando el sobre de antes (firmante == autor) mientras queden clientes
     // viejos publicando: ahí no hay nada que probar porque son la misma llave.
+    // PARA QUIÉN VA. Se mira antes que la firma y en los DOS caminos: una firma válida
+    // dirigida a otro servicio sigue sin ser para nosotros.
+    if (typeof data.aud !== 'string' || !AUDIENCES.includes(data.aud.replace(/\/+$/, ''))) {
+        return { status: 401, error: 'wrong or missing audience' };
+    }
     const conCadena = Array.isArray(chain) && chain.length
     if (conCadena) {
-        if (!await verifyPinBy(data, signature, signer, chain)) return { status: 401, error: 'invalid signature or chain' };
+        if (!await verifyPinBy(data, signature, signer, chain, data.aud)) return { status: 401, error: 'invalid signature or chain' };
     } else if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
     if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt required' };
     if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'envelope expired or clock out of range' };
@@ -121,10 +137,19 @@ async function applyPinEnvelope(data, signature, now, { fresh, signer, chain } =
 
 // Valida + aplica un TOMBSTONE firmado. Se conserva hasta now+MAX_TTL para tapar
 // la ventana de sincronización (que no resucite el pin desde otro nodo).
-async function applyTombstoneEnvelope(data, signature, now, { fresh } = {}) {
+async function applyTombstoneEnvelope(data, signature, now, { fresh, signer, chain } = {}) {
     if (!data || typeof data !== 'object') return { status: 400, error: 'missing data' };
     if (data.action !== 'remove') return { status: 400, error: 'action must be "remove"' };
-    if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
+    if (typeof data.aud !== 'string' || !AUDIENCES.includes(data.aud.replace(/\/+$/, ''))) {
+        return { status: 401, error: 'wrong or missing audience' };
+    }
+    // Retirar el pin es tan tuyo como ponerlo: si el pin se puede firmar desde otro aparato
+    // de la cuenta, el tombstone también. Antes solo valía la llave de la identidad, así que
+    // desde el teléfono no se podía retirar lo publicado desde el PC.
+    const conCadena = Array.isArray(chain) && chain.length
+    if (conCadena) {
+        if (!await verifyPinBy(data, signature, signer, chain, data.aud)) return { status: 401, error: 'invalid signature or chain' };
+    } else if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
     if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt required' };
     if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'envelope expired' };
     const { changed } = await db.applyTombstone({
@@ -145,10 +170,10 @@ async function handlePut(req, res, now) {
 }
 
 async function handleDelete(req, res, now) {
-    const { data, signature } = (await readBody(req)) || {};
-    const r = await applyTombstoneEnvelope(data, signature, now, { fresh: true });
+    const { data, signature, signer, chain } = (await readBody(req)) || {};
+    const r = await applyTombstoneEnvelope(data, signature, now, { fresh: true, signer, chain });
     if (r.status !== 200) return send(res, r.status, { error: r.error });
-    if (r.changed) pushToPeers('tombstone', data, signature);
+    if (r.changed) pushToPeers('tombstone', data, signature, { signer, chain });
     return send(res, 200, { ok: true });
 }
 
@@ -160,7 +185,7 @@ async function handleReplicate(req, res, now) {
     const body = (await readBody(req)) || {};
     const { kind, data, signature } = body;
     const r = kind === 'tombstone'
-        ? await applyTombstoneEnvelope(data, signature, now, { fresh: false })
+        ? await applyTombstoneEnvelope(data, signature, now, { fresh: false, signer: body.signer, chain: body.chain })
         : await applyPinEnvelope(data, signature, now, { fresh: false, signer: body.signer, chain: body.chain });
     if (r.status !== 200) return send(res, r.status, { error: r.error });
     return send(res, 200, { ok: true, changed: r.changed });
@@ -263,6 +288,12 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function main() {
+    // Sin destinatario declarado no se arranca: un índice que acepta cualquier `aud` no está
+    // comprobando nada, y el fallo sería silencioso — pins entrando desde donde sea.
+    if (!AUDIENCES.length) {
+        console.error('[geo] GEO_AUDIENCE is required: the public URL(s) this service is called by, comma separated (e.g. https://geo.dotrino.com)');
+        process.exit(1);
+    }
     await db.init(DATABASE_URL);
     setInterval(async () => {
         try {
@@ -291,9 +322,14 @@ async function main() {
                     if (!resp.ok) continue;
                     const { items, maxUpdatedAt } = await resp.json();
                     const nowTs = Date.now();
+                    // LO QUE VIENE POR AQUÍ NO TRAE CADENA, y no es de este cambio: la fila
+                    // guarda `data` y la firma, no quién firmó ni su cadena, así que `/since`
+                    // no las puede devolver. Un pin firmado por un aparato distinto del autor
+                    // se rechaza al reconciliar (por firma, ruidosamente). Se arregla
+                    // guardándolas en la fila; queda anotado y no se tapa aceptando a ciegas.
                     for (const it of (items || [])) {
-                        if (it.kind === 'tombstone') await applyTombstoneEnvelope(it.data, it.signature, nowTs, { fresh: false });
-                        else await applyPinEnvelope(it.data, it.signature, nowTs, { fresh: false });
+                        if (it.kind === 'tombstone') await applyTombstoneEnvelope(it.data, it.signature, nowTs, { fresh: false, signer: it.signer, chain: it.chain });
+                        else await applyPinEnvelope(it.data, it.signature, nowTs, { fresh: false, signer: it.signer, chain: it.chain });
                     }
                     if (typeof maxUpdatedAt === 'number' && maxUpdatedAt > since) watermarks.set(peer, maxUpdatedAt);
                 } catch (e) { console.warn(`[geo] anti-entropy with ${peer} failed:`, e.message); }
