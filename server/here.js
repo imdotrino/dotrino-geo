@@ -31,7 +31,6 @@ const MAX_HERE_BODY = 16 * 1024;       // 16 KB por POST
 const HERE_TTL_MS = Number(process.env.GEO_HERE_TTL_MS || 30 * 60 * 1000);  // 30 min
 const MAX_MEMBERS_RETURNED = 64;       // tope de amigos devueltos por respuesta
 // Tolerancia de reloj entre el vault (emisor del cert) y este bridge (verificador).
-const HERE_SKEW_MS = Number(process.env.GEO_HERE_SKEW_MS || 5 * 60 * 1000);  // 5 min
 
 // --- carga perezosa (una sola vez) de la primitiva de delegación (ESM desde CJS) ---
 let _capsPromise = null;
@@ -44,6 +43,16 @@ function loadCaps() {
             .catch(() => import('../../dotrino-identity/vault/capabilities.js'));
     }
     return _capsPromise;
+}
+
+// --- y el acta, que es quien dice qué puede cada llave (mismo origen que las caps) ---
+let _actaPromise = null;
+function loadActa() {
+    if (!_actaPromise) {
+        _actaPromise = import('@dotrino/identity/acta')
+            .catch(() => import('../../dotrino-identity/vault/acta.js'));
+    }
+    return _actaPromise;
 }
 
 // --- store EFÍMERO en memoria: circleId -> Map(memberId -> { blob, expiresAt }) ---
@@ -86,13 +95,26 @@ function parseBasicAuth(headerValue) {
 }
 
 // --- decodifica el cert del password (base64url(JSON.stringify(cert))) ---
-function decodeCert(passwordB64url) {
+/**
+ * El password del Basic trae el PAPEL Y EL ACTA: `{ cert, chain }`.
+ *
+ * Antes traía el certificado suelto, y con eso ya no se puede juzgar nada: desde que un
+ * papel no caduca por reloj, lo que puede hacer una llave lo dice el acta del perfil
+ * (`seq` + quién sella), y sin ella `verifyDelegation` responde «no-acta» — correctamente.
+ * Un papel a secas se acepta al decodificar y se rechaza después, con su motivo: aquí no
+ * se rellena lo que falta.
+ */
+function decodeCap(passwordB64url) {
     if (typeof passwordB64url !== 'string' || !passwordB64url) return null;
     try {
         // Buffer acepta base64url directamente (también tolera base64 estándar).
         const json = Buffer.from(passwordB64url, 'base64url').toString('utf8');
-        const cert = JSON.parse(json);
-        return (cert && typeof cert === 'object') ? cert : null;
+        const paquete = JSON.parse(json);
+        if (!paquete || typeof paquete !== 'object') return null;
+        if (paquete.cert && typeof paquete.cert === 'object') {
+            return { cert: paquete.cert, chain: Array.isArray(paquete.chain) ? paquete.chain : null };
+        }
+        return { cert: paquete, chain: null };   // formato viejo: sin acta, no se puede juzgar
     } catch (_) { return null; }
 }
 
@@ -184,12 +206,21 @@ async function handleHere(req, res, now, readBody, send) {
     }
     const ownerId = circleId.split(':')[0];
 
-    const cert = decodeCert(basic.pass);
-    if (!cert) return send(res, 401, { error: 'invalid cert' });
+    const cap = decodeCap(basic.pass);
+    if (!cap) return send(res, 401, { error: 'invalid cert' });
+    const { cert, chain } = cap;
 
-    // (2) verifyDelegation: el dueño firmó el cert, está en ventana temporal y no revocado.
-    //     expectedScope 'geo:publish' (publicar). Revocación por set en memoria.
-    const v = await verifyDelegation({ cert, expectedScope: 'geo:publish', now, skewMs: HERE_SKEW_MS, revoked: isRevoked });
+    // (2) EL ACTA DEL PERFIL, que es quien dice qué puede cada llave. El papel ya no
+    //     caduca por reloj: lleva el `seq` del acta con el que se emitió, y quien verifica
+    //     necesita el acta para juzgarlo. Sin ella no se juzga y se dice por qué.
+    if (!chain || !chain.length) return send(res, 401, { error: 'invalid cap', reason: 'sin-acta' });
+    const { verifySealerChain } = await loadActa();
+    const acta = await verifySealerChain(chain);
+    if (!acta.ok) return send(res, 401, { error: 'invalid cap', reason: 'acta:' + acta.reason });
+
+    // (2b) verifyDelegation: una selladora de ESE perfil avaló esta llave, con este scope,
+    //      y no está revocada. `expectedScope` 'geo:publish' (publicar).
+    const v = await verifyDelegation({ cert, expectedScope: 'geo:publish', revoked: isRevoked, actaSeq: acta.seq, sealers: acta.sealers });
     if (!v.ok) return send(res, 401, { error: 'invalid cap', reason: v.reason });
 
     // (2b) además el scope DEBE incluir 'geo:read:<circleId>' (leer a los amigos de ESTE círculo).
@@ -197,10 +228,12 @@ async function handleHere(req, res, now, readBody, send) {
         return send(res, 401, { error: 'invalid cap', reason: 'scope-read-circle' });
     }
 
-    // (3) ligadura criptográfica círculo↔dueño: pubkeyId(cert.iss) === circleId.split(':')[0].
-    //     Una cap de OTRO emisor (otro dueño / otro círculo) NO sirve para este circleId.
+    // (3) ligadura criptográfica círculo↔dueño: el círculo es del PERFIL, no de una llave
+    //     suelta. Se compara contra el `profileId` de la cadena —la llave del génesis, que
+    //     no cambia nunca— y no contra quien firmó el papel: así el círculo sigue siendo
+    //     tuyo aunque cambie quién sella. Una cap de otro perfil NO sirve para este círculo.
     let issuerId;
-    try { issuerId = await pubkeyId(cert.iss); }
+    try { issuerId = await pubkeyId(acta.profileId); }
     catch (_) { return send(res, 401, { error: 'invalid iss' }); }
     if (issuerId !== ownerId) {
         return send(res, 401, { error: 'invalid cap', reason: 'issuer-circle-mismatch' });
@@ -260,9 +293,8 @@ module.exports = {
     isRevoked,
     // Exportados para tests / herramientas:
     parseBasicAuth,
-    decodeCert,
+    decodeCap,
     HERE_TTL_MS,
-    HERE_SKEW_MS,
     MAX_HERE_BODY,
     _circles: circles,
     _revokedNonces: revokedNonces

@@ -36,8 +36,10 @@ const path = require('node:path');
 
 // --- helpers de simulación HTTP (no levantamos el server; llamamos handleHere directo) ---
 
-function basicHeader(circleId, cert) {
-    const pass = Buffer.from(JSON.stringify(cert), 'utf8').toString('base64url');
+function basicHeader(circleId, cert, chain) {
+    // El papel no caduca por reloj: lo que puede una llave lo dice el ACTA, así que viaja
+    // con él. Sin acta el bridge no puede juzgar y responde 401 «sin-acta».
+    const pass = Buffer.from(JSON.stringify(chain ? { cert, chain } : cert), 'utf8').toString('base64url');
     const raw = Buffer.from(`${circleId}:${pass}`, 'utf8').toString('base64');
     return 'Basic ' + raw;
 }
@@ -80,7 +82,7 @@ async function issueCert(owner, circleId, { ttlMs, exp } = {}) {
     if (typeof ttlMs === 'number') opts.ttlMs = ttlMs;
     if (typeof exp === 'number') opts.exp = exp;
     const { cert } = await owner.id.signDelegation(device.publickey, scope, opts);
-    return { device, cert };
+    return { device, cert, chain: await owner.id.sealerChain() };
 }
 
 // limpia el store en memoria entre tests (es un módulo singleton).
@@ -101,7 +103,7 @@ test('publica ok y otro miembro del círculo recibe el blob OPACO', async () => 
     const blobA = { _type: 'encrypted', data: 'AAAA-ciphertext-de-A' };
     {
         const cap = captureSend();
-        await here.handleHere(fakeReq(basicHeader(circleId, a.cert)), {}, Date.now(),
+        await here.handleHere(fakeReq(basicHeader(circleId, a.cert, a.chain)), {}, Date.now(),
             readBodyOf(blobA), cap.send);
         assert.equal(cap.status, 200, 'A publica ok');
         assert.ok(Array.isArray(cap.body), 'respuesta es array');
@@ -113,7 +115,7 @@ test('publica ok y otro miembro del círculo recibe el blob OPACO', async () => 
     const blobB = { _type: 'encrypted', data: 'BBBB-ciphertext-de-B' };
     {
         const cap = captureSend();
-        await here.handleHere(fakeReq(basicHeader(circleId, b.cert)), {}, Date.now(),
+        await here.handleHere(fakeReq(basicHeader(circleId, b.cert, b.chain)), {}, Date.now(),
             readBodyOf(blobB), cap.send);
         assert.equal(cap.status, 200, 'B publica ok');
         assert.ok(Array.isArray(cap.body));
@@ -128,7 +130,7 @@ test('publica ok y otro miembro del círculo recibe el blob OPACO', async () => 
     // y A, al re-publicar, ahora ve a B (overwrite + lectura cruzada)
     {
         const cap = captureSend();
-        await here.handleHere(fakeReq(basicHeader(circleId, a.cert)), {}, Date.now(),
+        await here.handleHere(fakeReq(basicHeader(circleId, a.cert, a.chain)), {}, Date.now(),
             readBodyOf(blobA), cap.send);
         assert.equal(cap.status, 200);
         assert.equal(cap.body.length, 1, 'A ahora ve a B');
@@ -160,7 +162,7 @@ test('cap de OTRO círculo (mismo dueño, otro slug) → 401', async () => {
     // cert emitido para "trabajo" (scope geo:read:<trabajo>), pero lo presentamos al círculo "familia"
     const c = await issueCert(owner, otherCircle);
     const cap = captureSend();
-    await here.handleHere(fakeReq(basicHeader(circleId, c.cert)), {}, Date.now(),
+    await here.handleHere(fakeReq(basicHeader(circleId, c.cert, c.chain)), {}, Date.now(),
         readBodyOf({ _type: 'encrypted', data: 'x' }), cap.send);
     assert.equal(cap.status, 401, 'scope geo:read:<otroCírculo> no autoriza este círculo');
     assert.equal(here._circles.size, 0, 'no escribió');
@@ -174,22 +176,42 @@ test('cap de OTRO issuer (otro dueño) para un circleId ajeno → 401', async ()
     // pero B emite un cert con scope geo:read:<circleId-de-A> (intento de suplantar)
     const c = await issueCert(ownerB, circleId);
     const cap = captureSend();
-    await here.handleHere(fakeReq(basicHeader(circleId, c.cert)), {}, Date.now(),
+    await here.handleHere(fakeReq(basicHeader(circleId, c.cert, c.chain)), {}, Date.now(),
         readBodyOf({ _type: 'encrypted', data: 'x' }), cap.send);
     assert.equal(cap.status, 401, 'pubkeyId(cert.iss) !== prefijo del circleId → 401');
     assert.equal(here._circles.size, 0, 'no escribió');
 });
 
-test('cert EXPIRADO → 401', async () => {
+// AQUÍ VIVÍA «cert EXPIRADO → 401», y se ha ido a propósito: los papeles ya NO caducan por
+// reloj (llevan el `seq` del acta con el que se emitieron y mueren con ella), así que
+// `signDelegation` ignora el `exp` que se le pase y el test comprobaba una regla que ya no
+// existe. Lo que hay que comprobar del modelo de hoy es que sin acta no se juzga, y que el
+// acta tiene que ser la del dueño del círculo.
+
+test('papel SIN acta → 401: sin ella no se puede juzgar', async () => {
     const owner = await makeOwner();
     const circleId = owner.ownerId + ':familia';
-    // exp en el pasado, MÁS ALLÁ del skew tolerado por el bridge (si no, 5 min de gracia lo admitiría)
-    const past = Date.now() - here.HERE_SKEW_MS - 60 * 1000;
-    const c = await issueCert(owner, circleId, { exp: past });
+    const c = await issueCert(owner, circleId);
     const cap = captureSend();
+    // El formato viejo: el papel suelto, sin la cadena.
     await here.handleHere(fakeReq(basicHeader(circleId, c.cert)), {}, Date.now(),
         readBodyOf({ _type: 'encrypted', data: 'x' }), cap.send);
-    assert.equal(cap.status, 401, 'cert vencido → 401');
+    assert.equal(cap.status, 401, 'papel suelto → 401');
+    assert.equal(cap.body.reason, 'sin-acta', 'y se dice por qué, en vez de un 401 mudo');
+    assert.equal(here._circles.size, 0, 'no escribió');
+});
+
+test('papel con el acta de OTRO perfil → 401', async () => {
+    const owner = await makeOwner();
+    const otro = await makeOwner();
+    const circleId = owner.ownerId + ':familia';
+    const c = await issueCert(owner, circleId);
+    const cap = captureSend();
+    // Papel del dueño, acta de un desconocido: la cadena verifica (es válida), pero no es
+    // de este perfil, y quien la presenta no puede escribir en este círculo.
+    await here.handleHere(fakeReq(basicHeader(circleId, c.cert, await otro.id.sealerChain())), {}, Date.now(),
+        readBodyOf({ _type: 'encrypted', data: 'x' }), cap.send);
+    assert.equal(cap.status, 401, 'acta ajena → 401');
     assert.equal(here._circles.size, 0, 'no escribió');
 });
 
@@ -200,7 +222,7 @@ test('cert REVOCADO → 401', async () => {
     // el bridge consulta su feed de revocación en memoria
     here.revoke(c.cert.nonce);
     const cap = captureSend();
-    await here.handleHere(fakeReq(basicHeader(circleId, c.cert)), {}, Date.now(),
+    await here.handleHere(fakeReq(basicHeader(circleId, c.cert, c.chain)), {}, Date.now(),
         readBodyOf({ _type: 'encrypted', data: 'x' }), cap.send);
     assert.equal(cap.status, 401, 'cert revocado → 401');
     assert.equal(here._circles.size, 0, 'no escribió');
@@ -213,13 +235,13 @@ test('cross-círculo: dos círculos del mismo dueño NO se ven entre sí', async
 
     const a = await issueCert(owner, circle1);
     const cap1 = captureSend();
-    await here.handleHere(fakeReq(basicHeader(circle1, a.cert)), {}, Date.now(),
+    await here.handleHere(fakeReq(basicHeader(circle1, a.cert, a.chain)), {}, Date.now(),
         readBodyOf({ _type: 'encrypted', data: 'fam' }), cap1.send);
     assert.equal(cap1.status, 200);
 
     const b = await issueCert(owner, circle2);
     const cap2 = captureSend();
-    await here.handleHere(fakeReq(basicHeader(circle2, b.cert)), {}, Date.now(),
+    await here.handleHere(fakeReq(basicHeader(circle2, b.cert, b.chain)), {}, Date.now(),
         readBodyOf({ _type: 'encrypted', data: 'amg' }), cap2.send);
     assert.equal(cap2.status, 200);
     assert.equal(cap2.body.length, 0, 'el círculo "amigos" no ve presencias de "familia"');
@@ -260,7 +282,7 @@ test('/here/revoke: tras revocar, el cert ya NO puede publicar en /here (401)', 
     // publica ok ANTES de revocar
     {
         const cap = captureSend();
-        await here.handleHere(fakeReq(basicHeader(circleId, c.cert)), {}, Date.now(),
+        await here.handleHere(fakeReq(basicHeader(circleId, c.cert, c.chain)), {}, Date.now(),
             readBodyOf({ _type: 'encrypted', data: 'x' }), cap.send);
         assert.equal(cap.status, 200, 'antes de revocar publica ok');
     }
@@ -277,7 +299,7 @@ test('/here/revoke: tras revocar, el cert ya NO puede publicar en /here (401)', 
     // ahora /here lo rechaza (cap revocado → 401)
     {
         const cap = captureSend();
-        await here.handleHere(fakeReq(basicHeader(circleId, c.cert)), {}, Date.now(),
+        await here.handleHere(fakeReq(basicHeader(circleId, c.cert, c.chain)), {}, Date.now(),
             readBodyOf({ _type: 'encrypted', data: 'y' }), cap.send);
         assert.equal(cap.status, 401, 'cert revocado → 401 end-to-end');
     }
@@ -345,7 +367,7 @@ test('TTL: un blob expirado no se devuelve a otro miembro', async () => {
     const a = await issueCert(owner, circleId);
     const t0 = a.cert.iat;   // base = cuándo el cert pasó a ser válido (evita now < iat)
     const capA = captureSend();
-    await here.handleHere(fakeReq(basicHeader(circleId, a.cert)), {}, t0,
+    await here.handleHere(fakeReq(basicHeader(circleId, a.cert, a.chain)), {}, t0,
         readBodyOf({ _type: 'encrypted', data: 'vieja' }), capA.send);
     assert.equal(capA.status, 200);
 
@@ -353,7 +375,7 @@ test('TTL: un blob expirado no se devuelve a otro miembro', async () => {
     const b = await issueCert(owner, circleId);
     const capB = captureSend();
     const later = t0 + here.HERE_TTL_MS + 1000;
-    await here.handleHere(fakeReq(basicHeader(circleId, b.cert)), {}, later,
+    await here.handleHere(fakeReq(basicHeader(circleId, b.cert, b.chain)), {}, later,
         readBodyOf({ _type: 'encrypted', data: 'nueva' }), capB.send);
     assert.equal(capB.status, 200);
     assert.equal(capB.body.length, 0, 'el blob de A expiró por TTL');
