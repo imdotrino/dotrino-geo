@@ -37,6 +37,10 @@ jobs:
 
       - run: npm i -g npm@latest
       - run: npm ci
+      # El servidor tiene su propio package.json, y sus pruebas necesitan sus
+      # dependencias. Sin esto los tests del bridge se saltaban en CI por no encontrar
+      # el pilar — es decir, no probaban nada.
+      - run: npm ci --prefix server
 
       # LAS PRUEBAS ANTES DE PUBLICAR. Una versión que no pasa su suite no llega a npm.
       - run: npm test

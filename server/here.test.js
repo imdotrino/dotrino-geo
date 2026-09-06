@@ -15,13 +15,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // --- carga ESM (identity Node adapter + capabilities) desde este test CJS ---
-const ID_BASE = '../../dotrino-identity';
+//
+// POR EL NOMBRE DEL PAQUETE, no por una ruta al monorepo. Con `../../dotrino-identity`
+// estos tests solo corrían en la máquina de quien tiene todo el ecosistema clonado al
+// lado: en CI no existe esa carpeta, así que fallaban los 15 y la suite roja llevaba
+// meses impidiendo publicar. Y de paso resuelven la MISMA copia que usa el bridge
+// (`server/node_modules`), que es lo que hay que probar.
 let Identity, makeDeviceKey, signWithDevice, pubkeyId;
 
 async function loadIdentity() {
     if (Identity) return;
-    const node = await import(ID_BASE + '/src/node.js');
-    const caps = await import(ID_BASE + '/vault/capabilities.js');
+    const node = await import('@dotrino/identity/node');
+    const caps = await import('@dotrino/identity/capabilities');
     Identity = node.Identity;
     makeDeviceKey = caps.makeDeviceKey;
     signWithDevice = caps.signWithDevice;
