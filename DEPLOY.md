@@ -60,3 +60,4 @@ server {
 | `DATABASE_URL` | (PG\* del entorno) | conexión PostGIS |
 | `GEO_MAX_TTL_MS` | `86400000` | cap del TTL de un pin (24 h, = ventana offline del proxy) |
 | `GEO_CLOCK_SKEW_MS` | `300000` | tolerancia anti-replay del sobre (5 min) |
+| `GEO_AUDIENCE` | **sin valor: no arranca** | la URL pública del SERVICIO, que es para quien firman los clientes (`https://geo.dotrino.com`). Varias separadas por comas si responde en varios nombres. Es del servicio y no del nodo: los nodos son réplicas y un pin replicado llega firmado para el servicio. |
