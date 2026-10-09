@@ -338,6 +338,14 @@ async function main() {
     }
 
     server.listen(PORT, () => console.log(`[geo] geo.dotrino.com listening on :${PORT}`));
+    startUpdateWatch();
+}
+
+// §15: lo que se queda atrás en un servicio desplegado desde git son sus pilares.
+function startUpdateWatch() {
+    import('@dotrino/update/deps')
+        .then(({ watchDependencies }) => watchDependencies({ dir: __dirname, name: 'geo' }))
+        .catch((e) => console.error('[update] could not start the watch:', e.code || e.message));
 }
 
 main().catch(err => { console.error('[geo] fatal', err); process.exit(1); });
