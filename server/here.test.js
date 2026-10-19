@@ -43,7 +43,7 @@ const path = require('node:path');
 
 function basicHeader(circleId, cert, chain) {
     // El papel no caduca por reloj: lo que puede una llave lo dice el ACTA, así que viaja
-    // con él. Sin acta el bridge no puede juzgar y responde 401 «sin-acta».
+    // con él. Sin acta el bridge no puede juzgar y responde 401 «no-record».
     const pass = Buffer.from(JSON.stringify(chain ? { cert, chain } : cert), 'utf8').toString('base64url');
     const raw = Buffer.from(`${circleId}:${pass}`, 'utf8').toString('base64');
     return 'Basic ' + raw;
@@ -202,7 +202,7 @@ test('papel SIN acta → 401: sin ella no se puede juzgar', async () => {
     await here.handleHere(fakeReq(basicHeader(circleId, c.cert)), {}, Date.now(),
         readBodyOf({ _type: 'encrypted', data: 'x' }), cap.send);
     assert.equal(cap.status, 401, 'papel suelto → 401');
-    assert.equal(cap.body.reason, 'sin-acta', 'y se dice por qué, en vez de un 401 mudo');
+    assert.equal(cap.body.reason, 'no-record', 'y se dice por qué, en vez de un 401 mudo');
     assert.equal(here._circles.size, 0, 'no escribió');
 });
 

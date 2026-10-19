@@ -46,13 +46,13 @@ function loadCaps() {
 }
 
 // --- y el acta, que es quien dice qué puede cada llave (mismo origen que las caps) ---
-let _actaPromise = null;
-function loadActa() {
-    if (!_actaPromise) {
-        _actaPromise = import('@dotrino/identity/acta')
+let _recordModPromise = null;
+function loadRecordModule() {
+    if (!_recordModPromise) {
+        _recordModPromise = import('@dotrino/identity/acta')
             .catch(() => import('../../dotrino-identity/vault/acta.js'));
     }
-    return _actaPromise;
+    return _recordModPromise;
 }
 
 // --- store EFÍMERO en memoria: circleId -> Map(memberId -> { blob, expiresAt }) ---
@@ -213,14 +213,14 @@ async function handleHere(req, res, now, readBody, send) {
     // (2) EL ACTA DEL PERFIL, que es quien dice qué puede cada llave. El papel ya no
     //     caduca por reloj: lleva el `seq` del acta con el que se emitió, y quien verifica
     //     necesita el acta para juzgarlo. Sin ella no se juzga y se dice por qué.
-    if (!chain || !chain.length) return send(res, 401, { error: 'invalid cap', reason: 'sin-acta' });
-    const { verifySealerChain } = await loadActa();
-    const acta = await verifySealerChain(chain);
-    if (!acta.ok) return send(res, 401, { error: 'invalid cap', reason: 'acta:' + acta.reason });
+    if (!chain || !chain.length) return send(res, 401, { error: 'invalid cap', reason: 'no-record' });
+    const { verifySealerChain } = await loadRecordModule();
+    const record = await verifySealerChain(chain);
+    if (!record.ok) return send(res, 401, { error: 'invalid cap', reason: 'record:' + record.reason });
 
     // (2b) verifyDelegation: una selladora de ESE perfil avaló esta llave, con este scope,
     //      y no está revocada. `expectedScope` 'geo:publish' (publicar).
-    const v = await verifyDelegation({ cert, expectedScope: 'geo:publish', revoked: isRevoked, actaSeq: acta.seq, sealers: acta.sealers });
+    const v = await verifyDelegation({ cert, expectedScope: 'geo:publish', revoked: isRevoked, actaSeq: record.seq, sealers: record.sealers });
     if (!v.ok) return send(res, 401, { error: 'invalid cap', reason: v.reason });
 
     // (2b) además el scope DEBE incluir 'geo:read:<circleId>' (leer a los amigos de ESTE círculo).
@@ -233,7 +233,7 @@ async function handleHere(req, res, now, readBody, send) {
     //     no cambia nunca— y no contra quien firmó el papel: así el círculo sigue siendo
     //     tuyo aunque cambie quién sella. Una cap de otro perfil NO sirve para este círculo.
     let issuerId;
-    try { issuerId = await pubkeyId(acta.profileId); }
+    try { issuerId = await pubkeyId(record.profileId); }
     catch (_) { return send(res, 401, { error: 'invalid iss' }); }
     if (issuerId !== ownerId) {
         return send(res, 401, { error: 'invalid cap', reason: 'issuer-circle-mismatch' });
