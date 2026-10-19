@@ -14,6 +14,8 @@ const http = require('node:http');
 const db = require('./db.js');
 const { verifyEnvelope, verifyPinBy, pubkeyId } = require('./signature.js');
 const rl = require('./rateLimiter.js');
+// Fuente única: src/tags.js, copiada por `node vendor.mjs`.
+const { normalizeTags } = require('./vendor/shared.js');
 const here = require('./here.js');   // bridge CERRADO de círculos privados (POST /here)
 
 const PORT = Number(process.env.PORT || 8090);
@@ -80,20 +82,6 @@ function readBody(req) {
 // Valida frescura del sobre para evitar replays de pins viejos.
 function freshEnough(issuedAt, now) {
     return typeof issuedAt === 'number' && Math.abs(now - issuedAt) <= CLOCK_SKEW_MS;
-}
-
-// Normaliza etiquetas: lowercase, trim, slug unicode, ≤32 chars, dedup, máx 10.
-function normalizeTags(tags) {
-    if (!Array.isArray(tags)) return [];
-    const out = [];
-    for (const t of tags) {
-        if (typeof t !== 'string') continue;
-        const s = t.trim().toLowerCase();
-        if (!/^[\p{L}\p{N}_-]{1,32}$/u.test(s)) continue;
-        if (!out.includes(s)) out.push(s);
-        if (out.length >= 10) break;
-    }
-    return out;
 }
 
 // Para quién va y quién lo firma: lo mismo para un pin y para su tombstone. Devuelve

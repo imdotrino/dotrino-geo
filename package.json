@@ -1,6 +1,6 @@
 {
   "name": "@dotrino/geo",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Dotrino geo index client (geo.dotrino.com): vault-signed georeferenced pins, radius queries (PostGIS)",
   "type": "module",
   "main": "src/index.js",
@@ -19,7 +19,8 @@
   ],
   "scripts": {
     "test": "node --test",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "vendor": "node vendor.mjs"
   },
   "keywords": [
     "geolocation",

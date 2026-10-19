@@ -10,16 +10,9 @@
 
 const crypto = require('node:crypto');
 
-function canonicalStringify(value) {
-    if (value === null || typeof value !== 'object') {
-        return JSON.stringify(value);
-    }
-    if (Array.isArray(value)) {
-        return '[' + value.map(canonicalStringify).join(',') + ']';
-    }
-    const keys = Object.keys(value).sort();
-    return '{' + keys.map(k => JSON.stringify(k) + ':' + canonicalStringify(value[k])).join(',') + '}';
-}
+// Fuente única: src/canonical.js, copiada por `node vendor.mjs`. La firma depende de que el
+// cliente y el servidor serialicen igual byte a byte.
+const { canonicalStringify } = require('./vendor/shared.js');
 
 /**
  * @param {object} data        objeto firmado; debe incluir data.publickey (JWK string)

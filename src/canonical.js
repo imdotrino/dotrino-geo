@@ -2,6 +2,9 @@
  * Serialización JSON canónica (claves ordenadas recursivamente).
  * Necesaria para que las firmas coincidan entre cliente y servidor.
  * Idéntica a la del proxy-client / proxy-server del ecosistema.
+ *
+ * Fuente ÚNICA dentro de este repo: el servidor la recibe copiada en
+ * server/vendor/shared.js por `node vendor.mjs` (una prueba falla si se desincronizan).
  */
 export function canonicalStringify (value) {
   if (value === null || typeof value !== 'object') {

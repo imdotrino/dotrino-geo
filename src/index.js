@@ -19,6 +19,7 @@
  */
 
 import { canonicalStringify } from './canonical.js'
+import { normalizeTags } from './tags.js'
 import { encodeGeohash } from './geohash.js'
 
 export { encodeGeohash } from './geohash.js'
@@ -156,21 +157,6 @@ function round (n, decimals) {
   return Math.round(n * f) / f
 }
 
-// Normaliza etiquetas: lowercase, trim, slug unicode (letras/números/_/-), ≤32
-// chars, dedup, máx 10. Descarta las inválidas en silencio.
-export function normalizeTags (tags) {
-  if (!Array.isArray(tags)) return []
-  const out = []
-  for (const t of tags) {
-    if (typeof t !== 'string') continue
-    const s = t.trim().toLowerCase()
-    if (!/^[\p{L}\p{N}_-]{1,32}$/u.test(s)) continue
-    if (!out.includes(s)) out.push(s)
-    if (out.length >= 10) break
-  }
-  return out
-}
-
 async function handle (res) {
   let body = null
   try { body = await res.json() } catch (_) {}
@@ -181,4 +167,4 @@ async function handle (res) {
   return body
 }
 
-export { canonicalStringify }
+export { canonicalStringify, normalizeTags }
