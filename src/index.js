@@ -83,18 +83,7 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
     }
     const cleanTags = normalizeTags(tags)
     if (cleanTags.length) data.tags = cleanTags
-    const firma = await signData(data)
-    // Un vault viejo devuelve solo la firma; uno nuevo, el paquete con quién firmó y la
-    // cadena que prueba que ese firmante habla por esta identidad.
-    const sobre = typeof firma === 'string'
-      ? { data, signature: firma }
-      : { data, signature: firma.signature, ...(firma.publickey ? { signer: firma.publickey } : {}), ...(firma.chain?.length ? { chain: firma.chain } : {}) }
-    const res = await doFetch(`${base}/pins`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(sobre)
-    })
-    return handle(res)
+    return sendSigned('PUT', data)
   }
 
   /**
@@ -133,14 +122,21 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
     // chain}` desde hace versiones, y aquí se metía ese objeto donde el servidor espera la
     // firma en base64: retirar un pin antes de que expirara respondía 401 siempre. Y sin la
     // cadena tampoco se podía retirar el pin desde un aparato que no fuera el de la llave.
-    const firma = await signData(data)
-    const sobre = typeof firma === 'string'
-      ? { data, signature: firma }
-      : { data, signature: firma.signature, ...(firma.publickey ? { signer: firma.publickey } : {}), ...(firma.chain?.length ? { chain: firma.chain } : {}) }
+    return sendSigned('DELETE', data)
+  }
+
+  /** Firma `data` y lo manda a /pins: el mismo sobre para publicar y para retirar. */
+  async function sendSigned (method, data) {
+    const sig = await signData(data)
+    // Un vault viejo devuelve solo la firma; uno nuevo, el paquete con quién firmó y la
+    // cadena que prueba que ese firmante habla por esta identidad.
+    const envelope = typeof sig === 'string'
+      ? { data, signature: sig }
+      : { data, signature: sig.signature, ...(sig.publickey ? { signer: sig.publickey } : {}), ...(sig.chain?.length ? { chain: sig.chain } : {}) }
     const res = await doFetch(`${base}/pins`, {
-      method: 'DELETE',
+      method,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(sobre)
+      body: JSON.stringify(envelope)
     })
     return handle(res)
   }

@@ -208,13 +208,13 @@ test('papel SIN acta → 401: sin ella no se puede juzgar', async () => {
 
 test('papel con el acta de OTRO perfil → 401', async () => {
     const owner = await makeOwner();
-    const otro = await makeOwner();
+    const other = await makeOwner();
     const circleId = owner.ownerId + ':familia';
     const c = await issueCert(owner, circleId);
     const cap = captureSend();
     // Papel del dueño, acta de un desconocido: la cadena verifica (es válida), pero no es
     // de este perfil, y quien la presenta no puede escribir en este círculo.
-    await here.handleHere(fakeReq(basicHeader(circleId, c.cert, await otro.id.sealerChain())), {}, Date.now(),
+    await here.handleHere(fakeReq(basicHeader(circleId, c.cert, await other.id.sealerChain())), {}, Date.now(),
         readBodyOf({ _type: 'encrypted', data: 'x' }), cap.send);
     assert.equal(cap.status, 401, 'acta ajena → 401');
     assert.equal(here._circles.size, 0, 'no escribió');

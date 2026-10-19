@@ -12,38 +12,38 @@ import { createGeoClient } from '../src/index.js'
 const GEO = 'https://geo.dotrino.com'
 
 /** Un cliente que no llega a la red: guarda lo que habría enviado. */
-function clienteDePrueba (baseUrl = GEO) {
-  const enviado = []
+function testClient (baseUrl = GEO) {
+  const sent = []
   const client = createGeoClient({
     baseUrl,
     getPublicKeyJwk: async () => '{"kty":"EC","crv":"P-256","x":"x","y":"y"}',
     signData: async () => ({ signature: 'firma', publickey: '{"kty":"EC"}', chain: [{ seq: 1 }] }),
     fetch: async (url, opts) => {
-      enviado.push({ url, body: JSON.parse(opts.body), method: opts.method })
+      sent.push({ url, body: JSON.parse(opts.body), method: opts.method })
       return { ok: true, status: 200, json: async () => ({ ok: true }) }
     }
   })
-  return { client, enviado }
+  return { client, sent }
 }
 
 test('el pin dice para quién es, y sale del baseUrl', async () => {
-  const { client, enviado } = clienteDePrueba()
+  const { client, sent } = testClient()
   await client.publishPin({ lat: -2.17, lng: -79.92 })
-  assert.strictEqual(enviado[0].body.data.aud, GEO)
+  assert.strictEqual(sent[0].body.data.aud, GEO)
 })
 
 test('autohospedar cambia el destinatario', async () => {
-  const { client, enviado } = clienteDePrueba('https://geo.miempresa.com/')
+  const { client, sent } = testClient('https://geo.miempresa.com/')
   await client.publishPin({ lat: 0, lng: 0 })
-  assert.strictEqual(enviado[0].body.data.aud, 'https://geo.miempresa.com',
+  assert.strictEqual(sent[0].body.data.aud, 'https://geo.miempresa.com',
     'un pin firmado para el índice de la empresa no puede valer ante el nuestro')
 })
 
 test('retirar el pin manda la FIRMA, no el paquete entero', async () => {
-  const { client, enviado } = clienteDePrueba()
+  const { client, sent } = testClient()
   await client.removePin()
-  const { data, signature, signer, chain } = enviado[0].body
-  assert.strictEqual(enviado[0].method, 'DELETE')
+  const { data, signature, signer, chain } = sent[0].body
+  assert.strictEqual(sent[0].method, 'DELETE')
   assert.strictEqual(data.aud, GEO)
   // Antes iba el objeto `{signature, publickey, chain}` donde el servidor espera la firma
   // en base64, así que retirar un pin respondía 401 siempre.
@@ -54,5 +54,5 @@ test('retirar el pin manda la FIRMA, no el paquete entero', async () => {
 })
 
 test('un baseUrl que no es una URL revienta al crear el cliente, no al publicar', () => {
-  assert.throws(() => clienteDePrueba('esto-no-es-una-url'))
+  assert.throws(() => testClient('esto-no-es-una-url'))
 })

@@ -72,10 +72,10 @@ function verifyEnvelope(data, signatureB64) {
  * reimplementa aquí: es lógica de seguridad, y tenerla en dos sitios es tenerla mal en uno.
  * Import dinámico porque el pilar es ESM y este servidor es CommonJS.
  */
-let pilarMod = null;
-async function pilar() {
-    if (!pilarMod) pilarMod = await import('@dotrino/identity/assertion');
-    return pilarMod;
+let assertionMod = null;
+async function loadIdentityAssertion() {
+    if (!assertionMod) assertionMod = await import('@dotrino/identity/assertion');
+    return assertionMod;
 }
 
 async function verifyPinBy(data, signature, signer, chain, audience) {
@@ -89,7 +89,7 @@ async function verifyPinBy(data, signature, signer, chain, audience) {
         // este índice lo aceptaba igual reputación, y al revés: la misma firma servía en
         // los dos sitios. Lo comprueba el PILAR (`@dotrino/identity/assertion`), no este
         // servidor: es lógica de seguridad y tenerla en dos sitios es tenerla mal en uno.
-        const { verifySignedFor } = await pilar();
+        const { verifySignedFor } = await loadIdentityAssertion();
         const r = await verifySignedFor({ data, signature, publickey: signer, chain, audience, expectedProfileId: data.publickey });
         return !!r.ok;
     } catch (_) { return false; }

@@ -109,12 +109,12 @@ function decodeCap(passwordB64url) {
     try {
         // Buffer acepta base64url directamente (también tolera base64 estándar).
         const json = Buffer.from(passwordB64url, 'base64url').toString('utf8');
-        const paquete = JSON.parse(json);
-        if (!paquete || typeof paquete !== 'object') return null;
-        if (paquete.cert && typeof paquete.cert === 'object') {
-            return { cert: paquete.cert, chain: Array.isArray(paquete.chain) ? paquete.chain : null };
+        const pkg = JSON.parse(json);
+        if (!pkg || typeof pkg !== 'object') return null;
+        if (pkg.cert && typeof pkg.cert === 'object') {
+            return { cert: pkg.cert, chain: Array.isArray(pkg.chain) ? pkg.chain : null };
         }
-        return { cert: paquete, chain: null };   // formato viejo: sin acta, no se puede juzgar
+        return { cert: pkg, chain: null };   // formato viejo: sin acta, no se puede juzgar
     } catch (_) { return null; }
 }
 

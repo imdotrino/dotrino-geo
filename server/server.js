@@ -96,6 +96,21 @@ function normalizeTags(tags) {
     return out;
 }
 
+// Para quién va y quién lo firma: lo mismo para un pin y para su tombstone. Devuelve
+// null si vale, o el { status, error } con el que se rechaza.
+async function verifyEnvelopeFor(data, signature, signer, chain) {
+    // PARA QUIÉN VA. Se mira antes que la firma y en los DOS caminos: una firma válida
+    // dirigida a otro servicio sigue sin ser para nosotros.
+    if (typeof data.aud !== 'string' || !AUDIENCES.includes(data.aud.replace(/\/+$/, ''))) {
+        return { status: 401, error: 'wrong or missing audience' };
+    }
+    const hasChain = Array.isArray(chain) && chain.length;
+    if (hasChain) {
+        if (!await verifyPinBy(data, signature, signer, chain, data.aud)) return { status: 401, error: 'invalid signature or chain' };
+    } else if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
+    return null;
+}
+
 // Valida + aplica un PIN firmado (usado por el cliente y por la replicación).
 // `fresh` (anti-replay por reloj) solo se exige a escrituras del cliente, no a
 // las replicadas (que pueden ser de hace rato y aún válidas dentro del TTL).
@@ -107,15 +122,8 @@ async function applyPinEnvelope(data, signature, now, { fresh, signer, chain } =
     //
     // Se sigue aceptando el sobre de antes (firmante == autor) mientras queden clientes
     // viejos publicando: ahí no hay nada que probar porque son la misma llave.
-    // PARA QUIÉN VA. Se mira antes que la firma y en los DOS caminos: una firma válida
-    // dirigida a otro servicio sigue sin ser para nosotros.
-    if (typeof data.aud !== 'string' || !AUDIENCES.includes(data.aud.replace(/\/+$/, ''))) {
-        return { status: 401, error: 'wrong or missing audience' };
-    }
-    const conCadena = Array.isArray(chain) && chain.length
-    if (conCadena) {
-        if (!await verifyPinBy(data, signature, signer, chain, data.aud)) return { status: 401, error: 'invalid signature or chain' };
-    } else if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
+    const denied = await verifyEnvelopeFor(data, signature, signer, chain);
+    if (denied) return denied;
     if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt required' };
     if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'envelope expired or clock out of range' };
     const { lat, lng, geohash, payload, expiresAt } = data;
@@ -140,16 +148,11 @@ async function applyPinEnvelope(data, signature, now, { fresh, signer, chain } =
 async function applyTombstoneEnvelope(data, signature, now, { fresh, signer, chain } = {}) {
     if (!data || typeof data !== 'object') return { status: 400, error: 'missing data' };
     if (data.action !== 'remove') return { status: 400, error: 'action must be "remove"' };
-    if (typeof data.aud !== 'string' || !AUDIENCES.includes(data.aud.replace(/\/+$/, ''))) {
-        return { status: 401, error: 'wrong or missing audience' };
-    }
     // Retirar el pin es tan tuyo como ponerlo: si el pin se puede firmar desde otro aparato
     // de la cuenta, el tombstone también. Antes solo valía la llave de la identidad, así que
     // desde el teléfono no se podía retirar lo publicado desde el PC.
-    const conCadena = Array.isArray(chain) && chain.length
-    if (conCadena) {
-        if (!await verifyPinBy(data, signature, signer, chain, data.aud)) return { status: 401, error: 'invalid signature or chain' };
-    } else if (!verifyEnvelope(data, signature)) return { status: 401, error: 'invalid signature' };
+    const denied = await verifyEnvelopeFor(data, signature, signer, chain);
+    if (denied) return denied;
     if (typeof data.issuedAt !== 'number') return { status: 400, error: 'issuedAt required' };
     if (fresh && !freshEnough(data.issuedAt, now)) return { status: 401, error: 'envelope expired' };
     const { changed } = await db.applyTombstone({
