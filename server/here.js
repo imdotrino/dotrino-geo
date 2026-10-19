@@ -108,7 +108,7 @@ function parseBasicAuth(headerValue) {
  *
  * Antes traía el certificado suelto, y con eso ya no se puede juzgar nada: desde que un
  * papel no caduca por reloj, lo que puede hacer una llave lo dice el acta del perfil
- * (`seq` + quién sella), y sin ella `verifyDelegation` responde «no-acta» — correctamente.
+ * (`seq` + quién sella), y sin ella `verifyDelegation` responde «no-record» — correctamente.
  * Un papel a secas se acepta al decodificar y se rechaza después, con su motivo: aquí no
  * se rellena lo que falta.
  */
