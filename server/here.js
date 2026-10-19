@@ -32,15 +32,24 @@ const HERE_TTL_MS = Number(process.env.GEO_HERE_TTL_MS || 30 * 60 * 1000);  // 3
 const MAX_MEMBERS_RETURNED = 64;       // tope de amigos devueltos por respuesta
 // Tolerancia de reloj entre el vault (emisor del cert) y este bridge (verificador).
 
+// Importa un subpath de @dotrino/identity. Si no está instalado se dice en el log y el error
+// sigue hacia arriba (la petición responde 500); `reset` deja reintentar en la siguiente.
+function importIdentity(spec, reset) {
+    return import(spec).catch((e) => {
+        reset();
+        console.error(`[geo] could not load ${spec} (is @dotrino/identity installed in server/?):`, e.message);
+        throw e;
+    });
+}
+
 // --- carga perezosa (una sola vez) de la primitiva de delegación (ESM desde CJS) ---
 let _capsPromise = null;
 function loadCaps() {
     if (!_capsPromise) {
         // El server es CommonJS y capabilities.js es ESM → dynamic import una vez al boot.
-        // Preferimos el subpath del paquete; si el monorepo aún no lo enlazó, caemos a la
-        // ruta relativa dentro del ecosistema (…/dotrino-identity/vault/capabilities.js).
-        _capsPromise = import('@dotrino/identity/capabilities')
-            .catch(() => import('../../dotrino-identity/vault/capabilities.js'));
+        // SOLO del paquete instalado (server/package.json lo declara). Nada de caer a una
+        // ruta del monorepo: tapaba que en el VPS faltaba el paquete (HTTP 500 en /here).
+        _capsPromise = importIdentity('@dotrino/identity/capabilities', () => { _capsPromise = null; });
     }
     return _capsPromise;
 }
@@ -49,8 +58,7 @@ function loadCaps() {
 let _recordModPromise = null;
 function loadRecordModule() {
     if (!_recordModPromise) {
-        _recordModPromise = import('@dotrino/identity/acta')
-            .catch(() => import('../../dotrino-identity/vault/acta.js'));
+        _recordModPromise = importIdentity('@dotrino/identity/acta', () => { _recordModPromise = null; });
     }
     return _recordModPromise;
 }
