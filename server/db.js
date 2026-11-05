@@ -9,16 +9,32 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
 
+/** @type {import('pg').Pool | null} */
 let pool = null;
+
+/**
+ * El pool abierto por `init`. Usarlo antes es un fallo del llamador: se dice con un error
+ * que se pueda buscar, en vez del «cannot read properties of null» de antes.
+ * @returns {import('pg').Pool}
+ */
+function getPool() {
+    if (!pool) throw new Error('db: not initialized (call init first)');
+    return pool;
+}
 
 // Reloj monótono local para `updated_at` (watermark de anti-entropía). Estricto
 // crecimiento → /since con `> watermark` nunca pierde una fila.
 let _lastSeq = 0;
+/** @returns {number} */
 function nowSeq() { const t = Date.now(); _lastSeq = t > _lastSeq ? t : _lastSeq + 1; return _lastSeq; }
 
+/**
+ * @param {string} connectionString
+ * @returns {Promise<import('pg').Pool>}
+ */
 async function init(connectionString) {
     pool = new Pool(connectionString ? { connectionString } : undefined);
-    await pool.query(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
+    await getPool().query(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
     return pool;
 }
 
@@ -26,9 +42,11 @@ async function init(connectionString) {
  * Aplica un pin (local o replicado) con semántica LWW. `expiresAt` ya viene
  * capado por el llamador. Devuelve { changed } — true si modificó el estado
  * (entonces hay que propagarlo a los peers).
+ * @param {import('./types').PinRow} row
+ * @returns {Promise<{ changed: boolean }>}
  */
 async function applyPin({ pubkeyId, publickey, dataJson, signature, lat, lng, geohash, payload, tags, issuedAt, expiresAt }) {
-    const client = await pool.connect();
+    const client = await getPool().connect();
     try {
         await client.query('BEGIN');
         const tomb = await client.query('SELECT issued_at FROM tombstones WHERE pubkey_id = $1', [pubkeyId]);
@@ -60,9 +78,11 @@ async function applyPin({ pubkeyId, publickey, dataJson, signature, lat, lng, ge
 /**
  * Aplica un tombstone (borrado firmado) con LWW. `expiresAt` = hasta cuándo
  * conservarlo (para tapar la ventana de sync). Devuelve { changed }.
+ * @param {import('./types').TombstoneRow} row
+ * @returns {Promise<{ changed: boolean }>}
  */
 async function applyTombstone({ pubkeyId, dataJson, signature, issuedAt, expiresAt }) {
-    const client = await pool.connect();
+    const client = await getPool().connect();
     try {
         await client.query('BEGIN');
         const tomb = await client.query('SELECT issued_at FROM tombstones WHERE pubkey_id = $1', [pubkeyId]);
@@ -86,7 +106,12 @@ async function applyTombstone({ pubkeyId, dataJson, signature, issuedAt, expires
     } finally { client.release(); }
 }
 
+/**
+ * @param {import('./types').RadiusQuery} q
+ * @returns {Promise<import('./types').PinHit[]>}
+ */
 async function queryRadius({ lat, lng, radiusMeters, limit, filter, tags, now }) {
+    /** @type {unknown[]} */
     const params = [lng, lat, radiusMeters, now];
     let filterSql = '';
     if (filter && typeof filter === 'object' && Object.keys(filter).length) {
@@ -98,7 +123,7 @@ async function queryRadius({ lat, lng, radiusMeters, limit, filter, tags, now })
         filterSql += ` AND tags && $${params.length}::text[]`;  // overlap: tiene ALGUNA
     }
     params.push(limit);
-    const { rows } = await pool.query(`
+    const { rows } = await getPool().query(`
         SELECT publickey, ST_Y(geog::geometry) AS lat, ST_X(geog::geometry) AS lng, geohash, payload, tags, expires_at,
                ST_Distance(geog, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography) AS distance_m
         FROM pins
@@ -115,14 +140,18 @@ async function queryRadius({ lat, lng, radiusMeters, limit, filter, tags, now })
 /**
  * Anti-entropía: cambios locales con updated_at > since. Devuelve sobres
  * {data, signature} para que el peer los re-aplique, + el maxUpdatedAt visto.
+ * @param {number} since
+ * @param {number} limit
+ * @returns {Promise<{ items: import('./types').ChangeItem[], maxUpdatedAt: number }>}
  */
 async function changesSince(since, limit) {
-    const pins = await pool.query(
+    const pins = await getPool().query(
         `SELECT data_json, signature, updated_at FROM pins WHERE updated_at > $1 ORDER BY updated_at ASC LIMIT $2`,
         [since, limit]);
-    const tombs = await pool.query(
+    const tombs = await getPool().query(
         `SELECT data_json, signature, updated_at FROM tombstones WHERE updated_at > $1 ORDER BY updated_at ASC LIMIT $2`,
         [since, limit]);
+    /** @type {import('./types').ChangeItem[]} */
     const items = [];
     for (const r of pins.rows) items.push({ kind: 'pin', updatedAt: Number(r.updated_at), data: JSON.parse(r.data_json), signature: r.signature });
     for (const r of tombs.rows) items.push({ kind: 'tombstone', updatedAt: Number(r.updated_at), data: JSON.parse(r.data_json), signature: r.signature });
@@ -132,12 +161,17 @@ async function changesSince(since, limit) {
     return { items: capped, maxUpdatedAt };
 }
 
+/**
+ * @param {number} now
+ * @returns {Promise<number>}
+ */
 async function purgeExpired(now) {
-    const a = await pool.query('DELETE FROM pins WHERE expires_at <= $1', [now]);
-    const b = await pool.query('DELETE FROM tombstones WHERE expires_at <= $1', [now]);
+    const a = await getPool().query('DELETE FROM pins WHERE expires_at <= $1', [now]);
+    const b = await getPool().query('DELETE FROM tombstones WHERE expires_at <= $1', [now]);
     return (a.rowCount || 0) + (b.rowCount || 0);
 }
 
+/** @returns {Promise<void>} */
 async function close() { if (pool) await pool.end(); pool = null; }
 
 module.exports = { init, applyPin, applyTombstone, queryRadius, changesSince, purgeExpired, close };

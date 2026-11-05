@@ -49,6 +49,12 @@ const AUDIENCES = (process.env.GEO_AUDIENCE || '').split(',').map(s => s.trim().
 const ANTI_ENTROPY_MS = Number(process.env.GEO_ANTI_ENTROPY_MS || 30 * 1000);
 const SINCE_LIMIT = 500;
 
+/**
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} status
+ * @param {unknown} obj
+ * @param {Record<string, string>} [extraHeaders]
+ */
 function send(res, status, obj, extraHeaders) {
     const body = JSON.stringify(obj);
     res.writeHead(status, {
@@ -62,11 +68,16 @@ function send(res, status, obj, extraHeaders) {
     res.end(body);
 }
 
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {Promise<import('./types').EnvelopeBody>} el JSON del cuerpo, sin validar
+ */
 function readBody(req) {
     return new Promise((resolve, reject) => {
         let size = 0;
+        /** @type {Buffer[]} */
         const chunks = [];
-        req.on('data', c => {
+        req.on('data', (/** @type {Buffer} */ c) => {
             size += c.length;
             if (size > MAX_BODY) { reject(new Error('body too large')); req.destroy(); return; }
             chunks.push(c);
@@ -80,12 +91,24 @@ function readBody(req) {
 }
 
 // Valida frescura del sobre para evitar replays de pins viejos.
+/**
+ * @param {unknown} issuedAt
+ * @param {number} now
+ * @returns {boolean}
+ */
 function freshEnough(issuedAt, now) {
     return typeof issuedAt === 'number' && Math.abs(now - issuedAt) <= CLOCK_SKEW_MS;
 }
 
 // Para quién va y quién lo firma: lo mismo para un pin y para su tombstone. Devuelve
 // null si vale, o el { status, error } con el que se rechaza.
+/**
+ * @param {import('./types').SignedData} data
+ * @param {unknown} signature
+ * @param {unknown} signer
+ * @param {unknown} chain
+ * @returns {Promise<import('./types').ApplyResult | null>}
+ */
 async function verifyEnvelopeFor(data, signature, signer, chain) {
     // PARA QUIÉN VA. Se mira antes que la firma y en los DOS caminos: una firma válida
     // dirigida a otro servicio sigue sin ser para nosotros.
@@ -102,6 +125,13 @@ async function verifyEnvelopeFor(data, signature, signer, chain) {
 // Valida + aplica un PIN firmado (usado por el cliente y por la replicación).
 // `fresh` (anti-replay por reloj) solo se exige a escrituras del cliente, no a
 // las replicadas (que pueden ser de hace rato y aún válidas dentro del TTL).
+/**
+ * @param {import('./types').SignedData | undefined} data
+ * @param {unknown} signature
+ * @param {number} now
+ * @param {import('./types').ApplyOptions} [opts]
+ * @returns {Promise<import('./types').ApplyResult>}
+ */
 async function applyPinEnvelope(data, signature, now, { fresh, signer, chain } = {}) {
     if (!data || typeof data !== 'object') return { status: 400, error: 'missing data' };
     // El pin es de una IDENTIDAD y lo firma un APARATO. La cadena prueba que ese aparato
@@ -133,6 +163,13 @@ async function applyPinEnvelope(data, signature, now, { fresh, signer, chain } =
 
 // Valida + aplica un TOMBSTONE firmado. Se conserva hasta now+MAX_TTL para tapar
 // la ventana de sincronización (que no resucite el pin desde otro nodo).
+/**
+ * @param {import('./types').SignedData | undefined} data
+ * @param {unknown} signature
+ * @param {number} now
+ * @param {import('./types').ApplyOptions} [opts]
+ * @returns {Promise<import('./types').ApplyResult>}
+ */
 async function applyTombstoneEnvelope(data, signature, now, { fresh, signer, chain } = {}) {
     if (!data || typeof data !== 'object') return { status: 400, error: 'missing data' };
     if (data.action !== 'remove') return { status: 400, error: 'action must be "remove"' };
@@ -150,6 +187,12 @@ async function applyTombstoneEnvelope(data, signature, now, { fresh, signer, cha
     return { status: 200, changed };
 }
 
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} now
+ * @returns {Promise<void>}
+ */
 async function handlePut(req, res, now) {
     const { data, signature, signer, chain } = (await readBody(req)) || {};
     const r = await applyPinEnvelope(data, signature, now, { fresh: true, signer, chain });
@@ -160,6 +203,12 @@ async function handlePut(req, res, now) {
     return send(res, 200, { ok: true, expiresAt: r.cappedExpires, geohash: r.geohash });
 }
 
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} now
+ * @returns {Promise<void>}
+ */
 async function handleDelete(req, res, now) {
     const { data, signature, signer, chain } = (await readBody(req)) || {};
     const r = await applyTombstoneEnvelope(data, signature, now, { fresh: true, signer, chain });
@@ -171,6 +220,12 @@ async function handleDelete(req, res, now) {
 // --- Replicación entre nodos ---
 
 // Recibe un sobre empujado por un peer y lo aplica (sin re-empujar → sin loops).
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} now
+ * @returns {Promise<void>}
+ */
 async function handleReplicate(req, res, now) {
     if (REPL_TOKEN && req.headers['x-geo-token'] !== REPL_TOKEN) return send(res, 401, { error: 'invalid token' });
     const body = (await readBody(req)) || {};
@@ -183,6 +238,12 @@ async function handleReplicate(req, res, now) {
 }
 
 // Anti-entropía: devuelve los cambios locales con updated_at > since.
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {URL} url
+ * @returns {Promise<void>}
+ */
 async function handleSince(req, res, url) {
     if (REPL_TOKEN && req.headers['x-geo-token'] !== REPL_TOKEN) return send(res, 401, { error: 'invalid token' });
     const since = Number(url.searchParams.get('since') || 0) || 0;
@@ -191,6 +252,12 @@ async function handleSince(req, res, url) {
 }
 
 // Empuja un sobre a todos los peers (fire-and-forget, con timeout).
+/**
+ * @param {'pin' | 'tombstone'} kind
+ * @param {import('./types').SignedData | undefined} data
+ * @param {unknown} signature
+ * @param {{ signer?: unknown, chain?: unknown }} [extra]
+ */
 function pushToPeers(kind, data, signature, extra) {
     if (!PEERS.length) return;
     // `signer` y `chain` viajan también: el nodo de al lado comprueba lo mismo que
@@ -207,6 +274,13 @@ function pushToPeers(kind, data, signature, extra) {
     }
 }
 
+/**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {URL} url
+ * @param {number} now
+ * @returns {Promise<void>}
+ */
 async function handleGet(req, res, url, now) {
     const q = url.searchParams;
     // Number(null) === 0, así que un parámetro AUSENTE no puede pasar como 0.
@@ -237,7 +311,8 @@ async function handleGet(req, res, url, now) {
 const server = http.createServer(async (req, res) => {
     const now = Date.now();
     try {
-        const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+        // `req.url` siempre viene en las peticiones de un http.Server (doc de Node).
+        const url = new URL(/** @type {string} */ (req.url), `http://${req.headers.host || 'localhost'}`);
 
         if (req.method === 'OPTIONS') return send(res, 204, {});
         if (url.pathname === '/health') return send(res, 200, { ok: true });
@@ -271,7 +346,8 @@ const server = http.createServer(async (req, res) => {
             return send(res, 405, { error: 'method not allowed' });
         }
         return send(res, 404, { error: 'not found' });
-    } catch (err) {
+    } catch (e) {
+        const err = /** @type {Error | null | undefined} */ (e);
         const msg = err && err.message ? err.message : 'error';
         const status = (msg === 'body too large' || msg === 'invalid json') ? 400 : 500;
         return send(res, status, { error: msg });
@@ -290,7 +366,7 @@ async function main() {
         try {
             const n = await db.purgeExpired(Date.now());
             if (n) console.log(`[geo] purged ${n} expired pins`);
-        } catch (e) { console.error('[geo] purge error', e.message); }
+        } catch (e) { console.error('[geo] purge error', /** @type {Error} */ (e).message); }
         rl.prune(Date.now());
         here.purge(Date.now());   // bridge "here": purga blobs de presencia expirados
     }, PURGE_INTERVAL_MS).unref();
@@ -298,6 +374,7 @@ async function main() {
     // Anti-entropía: cada N s, traemos de cada peer sus cambios desde nuestro
     // watermark y los aplicamos (cubre pushes perdidos / nodos que estuvieron
     // caídos). No re-empujamos lo aplicado → sin loops.
+    /** @type {Map<string, number>} */
     const watermarks = new Map(); // peerUrl -> último updated_at visto de ese peer
     if (PEERS.length) {
         console.log(`[geo] federating with ${PEERS.length} peer(s): ${PEERS.join(', ')}`);
@@ -311,7 +388,7 @@ async function main() {
                         headers: REPL_TOKEN ? { 'x-geo-token': REPL_TOKEN } : {}, signal: ctrl.signal
                     }).finally(() => clearTimeout(t));
                     if (!resp.ok) continue;
-                    const { items, maxUpdatedAt } = await resp.json();
+                    const { items, maxUpdatedAt } = /** @type {{ items?: import('./types').ChangeItem[], maxUpdatedAt?: unknown }} */ (await resp.json());
                     const nowTs = Date.now();
                     // LO QUE VIENE POR AQUÍ NO TRAE CADENA, y no es de este cambio: la fila
                     // guarda `data` y la firma, no quién firmó ni su cadena, así que `/since`
@@ -323,7 +400,7 @@ async function main() {
                         else await applyPinEnvelope(it.data, it.signature, nowTs, { fresh: false, signer: it.signer, chain: it.chain });
                     }
                     if (typeof maxUpdatedAt === 'number' && maxUpdatedAt > since) watermarks.set(peer, maxUpdatedAt);
-                } catch (e) { console.warn(`[geo] anti-entropy with ${peer} failed:`, e.message); }
+                } catch (e) { console.warn(`[geo] anti-entropy with ${peer} failed:`, /** @type {Error} */ (e).message); }
             }
         }, ANTI_ENTROPY_MS).unref();
     }

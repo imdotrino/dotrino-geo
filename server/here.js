@@ -34,6 +34,11 @@ const MAX_MEMBERS_RETURNED = 64;       // tope de amigos devueltos por respuesta
 
 // Importa un subpath de @dotrino/identity. Si no está instalado se dice en el log y el error
 // sigue hacia arriba (la petición responde 500); `reset` deja reintentar en la siguiente.
+/**
+ * @param {string} spec
+ * @param {() => void} reset
+ * @returns {Promise<any>} el módulo; quien llama lo guarda con su tipo
+ */
 function importIdentity(spec, reset) {
     return import(spec).catch((e) => {
         reset();
@@ -43,7 +48,9 @@ function importIdentity(spec, reset) {
 }
 
 // --- carga perezosa (una sola vez) de la primitiva de delegación (ESM desde CJS) ---
+/** @type {Promise<typeof import('@dotrino/identity/capabilities')> | null} */
 let _capsPromise = null;
+/** @returns {Promise<typeof import('@dotrino/identity/capabilities')>} */
 function loadCaps() {
     if (!_capsPromise) {
         // El server es CommonJS y capabilities.js es ESM → dynamic import una vez al boot.
@@ -55,7 +62,9 @@ function loadCaps() {
 }
 
 // --- y el acta, que es quien dice qué puede cada llave (mismo origen que las caps) ---
+/** @type {Promise<typeof import('@dotrino/identity/acta')> | null} */
 let _recordModPromise = null;
+/** @returns {Promise<typeof import('@dotrino/identity/acta')>} */
 function loadRecordModule() {
     if (!_recordModPromise) {
         _recordModPromise = importIdentity('@dotrino/identity/acta', () => { _recordModPromise = null; });
@@ -65,15 +74,26 @@ function loadRecordModule() {
 
 // --- store EFÍMERO en memoria: circleId -> Map(memberId -> { blob, expiresAt }) ---
 // Sin historial: cada miembro tiene a lo sumo UN blob (overwrite). TTL por entrada.
+/** @type {Map<string, Map<string, { blob: object, expiresAt: number }>>} */
 const circles = new Map();
 
 // --- feed de revocación en memoria (nonces revocados). El bridge consulta este set;
 // es alimentable por fuera (p.ej. un feed firmado del dueño). EFÍMERO por diseño. ---
+/** @type {Set<string>} */
 const revokedNonces = new Set();
+/** @param {unknown} nonce */
 function revoke(nonce) { if (nonce) revokedNonces.add(String(nonce)); }
+/**
+ * @param {unknown} nonce
+ * @returns {boolean}
+ */
 function isRevoked(nonce) { return revokedNonces.has(String(nonce)); }
 
-/** Purga entradas (y círculos vacíos) expirados. Devuelve cuántas entradas eliminó. */
+/**
+ * Purga entradas (y círculos vacíos) expirados. Devuelve cuántas entradas eliminó.
+ * @param {number} [now]
+ * @returns {number}
+ */
 function purge(now = Date.now()) {
     let removed = 0;
     for (const [circleId, members] of circles) {
@@ -86,6 +106,10 @@ function purge(now = Date.now()) {
 }
 
 // --- parse de HTTP Basic: "Basic base64(user:pass)" → { user, pass } o null ---
+/**
+ * @param {unknown} headerValue
+ * @returns {{ user: string, pass: string } | null}
+ */
 function parseBasicAuth(headerValue) {
     if (typeof headerValue !== 'string') return null;
     const m = /^Basic\s+(.+)$/i.exec(headerValue.trim());
@@ -111,6 +135,8 @@ function parseBasicAuth(headerValue) {
  * (`seq` + quién sella), y sin ella `verifyDelegation` responde «no-record» — correctamente.
  * Un papel a secas se acepta al decodificar y se rechaza después, con su motivo: aquí no
  * se rellena lo que falta.
+ * @param {unknown} passwordB64url
+ * @returns {{ cert: Record<string, unknown>, chain: unknown[] | null } | null} `cert` es JSON del cliente: lo juzga `verifyDelegation`
  */
 function decodeCap(passwordB64url) {
     if (typeof passwordB64url !== 'string' || !passwordB64url) return null;
@@ -126,6 +152,11 @@ function decodeCap(passwordB64url) {
     } catch (_) { return null; }
 }
 
+/**
+ * @param {unknown} scope
+ * @param {string} want
+ * @returns {boolean}
+ */
 const scopeIncludes = (scope, want) =>
     Array.isArray(scope) ? scope.includes(want) : scope === want;
 
@@ -145,17 +176,19 @@ const { verifyEnvelope, pubkeyId: pubkeyIdSync } = require('./signature.js');
  * Si todo ok → here.revoke(nonce) (el cert deja de poder publicar/leer end-to-end).
  * Firma de otro / sin firma → 401/403, NO revoca.
  *
- * @param req  IncomingMessage
- * @param res  ServerResponse
- * @param now  timestamp
- * @param readBody  async (req) => objeto JSON parseado del body
- * @param send  (res, status, obj, extraHeaders) => void
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} now  timestamp
+ * @param {import('./types').ReadBody} readBody  objeto JSON parseado del body
+ * @param {import('./types').Send} send
+ * @returns {Promise<void>}
  */
 async function handleRevoke(req, res, now, readBody, send) {
     let body;
     try { body = await readBody(req); }
     catch (e) {
-        const msg = e && e.message ? e.message : 'invalid body';
+        const err = /** @type {Error | null | undefined} */ (e);
+        const msg = err && err.message ? err.message : 'invalid body';
         return send(res, 400, { error: msg });
     }
     const data = body && body.data;
@@ -195,11 +228,12 @@ async function handleRevoke(req, res, now, readBody, send) {
 
 /**
  * Maneja POST /here. CERRADO: sin cap válido no escribe ni lee.
- * @param req  IncomingMessage
- * @param res  ServerResponse
- * @param now  timestamp
- * @param readBody  async (req) => objeto JSON parseado del body (con tope de tamaño)
- * @param send  (res, status, obj, extraHeaders) => void   (el del server)
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} now  timestamp
+ * @param {import('./types').ReadBody} readBody  objeto JSON parseado del body (con tope de tamaño)
+ * @param {import('./types').Send} send  el del server
+ * @returns {Promise<void>}
  */
 async function handleHere(req, res, now, readBody, send) {
     const caps = await loadCaps();
@@ -256,7 +290,8 @@ async function handleHere(req, res, now, readBody, send) {
     let body;
     try { body = await readBody(req); }
     catch (e) {
-        const msg = e && e.message ? e.message : 'invalid body';
+        const err = /** @type {Error | null | undefined} */ (e);
+        const msg = err && err.message ? err.message : 'invalid body';
         return send(res, 400, { error: msg });
     }
     if (!body || typeof body !== 'object') return send(res, 400, { error: 'invalid body' });

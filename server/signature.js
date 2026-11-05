@@ -15,8 +15,8 @@ const crypto = require('node:crypto');
 const { canonicalStringify } = require('./vendor/shared.js');
 
 /**
- * @param {object} data        objeto firmado; debe incluir data.publickey (JWK string)
- * @param {string} signatureB64 firma base64
+ * @param {import('./types').SignedData | null | undefined} data  objeto firmado; debe incluir data.publickey (JWK string)
+ * @param {unknown} signatureB64 firma base64
  * @returns {boolean}
  */
 function verifyEnvelope(data, signatureB64) {
@@ -65,12 +65,22 @@ function verifyEnvelope(data, signatureB64) {
  * reimplementa aquí: es lógica de seguridad, y tenerla en dos sitios es tenerla mal en uno.
  * Import dinámico porque el pilar es ESM y este servidor es CommonJS.
  */
+/** @type {typeof import('@dotrino/identity/assertion') | null} */
 let assertionMod = null;
+/** @returns {Promise<typeof import('@dotrino/identity/assertion')>} */
 async function loadIdentityAssertion() {
     if (!assertionMod) assertionMod = await import('@dotrino/identity/assertion');
     return assertionMod;
 }
 
+/**
+ * @param {import('./types').SignedData} data
+ * @param {unknown} signature
+ * @param {unknown} signer   llave del aparato que firmó (JWK string)
+ * @param {unknown} chain    cadena de selladores de la identidad
+ * @param {unknown} audience URL del servicio para el que se firmó
+ * @returns {Promise<boolean>}
+ */
 async function verifyPinBy(data, signature, signer, chain, audience) {
     // Sin cadena no se puede juzgar. Aceptar «el que dice ser» sin prueba es el agujero.
     if (!Array.isArray(chain) || !chain.length || typeof signer !== 'string' || !signer) return false;
@@ -88,9 +98,14 @@ async function verifyPinBy(data, signature, signer, chain, audience) {
     } catch (_) { return false; }
 }
 
+/**
+ * @param {unknown} publickeyJwkString  JWK en string; lo que no se pueda leer se hashea tal cual
+ * @returns {string} SHA-256 hex
+ */
 function pubkeyId(publickeyJwkString) {
     try {
-        const jwk = JSON.parse(publickeyJwkString);
+        // String(): JSON.parse ya convierte su argumento a string; aquí solo se hace visible.
+        const jwk = JSON.parse(String(publickeyJwkString));
         const canon = canonicalStringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
         return crypto.createHash('sha256').update(canon).digest('hex');
     } catch (_) {

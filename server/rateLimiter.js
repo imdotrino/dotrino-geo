@@ -22,18 +22,23 @@ const DISABLED = process.env.GEO_RL_DISABLED === '1';
 // socket. (XFF es spoofeable; esto es amortiguación best-effort, no seguridad.)
 const TRUST_PROXY = process.env.GEO_TRUST_PROXY !== '0';
 
+/** @typedef {'read' | 'write'} BucketClass */
+
+/** @type {Record<BucketClass, { capacity: number, refillPerSec: number }>} */
 const CLASSES = {
     read:  { capacity: READ_PER_MIN,  refillPerSec: READ_PER_MIN / 60 },
     write: { capacity: WRITE_PER_MIN, refillPerSec: WRITE_PER_MIN / 60 }
 };
 
-// Map<`${cls}:${ip}`, { tokens, last }>
+/** @type {Map<string, { tokens: number, last: number }>} Map<`${cls}:${ip}`, { tokens, last }> */
 const buckets = new Map();
 
 /**
  * Extrae la IP del cliente. Con nginx delante, el socket es 127.0.0.1 y la IP
  * real viene en el primer hop de X-Forwarded-For (que nginx setea). Funciona
  * igual si en algún momento se quita Cloudflare: XFF lo pone nuestro nginx.
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {string}
  */
 function clientIp(req) {
     if (TRUST_PROXY) {
@@ -49,10 +54,14 @@ function clientIp(req) {
 /**
  * Consume 1 token de la cubeta (cls, ip). Devuelve {allowed, retryAfter} donde
  * retryAfter son segundos (entero) hasta tener 1 token, si se denegó.
+ * @param {string} cls  'read' | 'write'; otra clase no se limita
+ * @param {string} ip
+ * @param {number} now
+ * @returns {{ allowed: boolean, retryAfter: number }}
  */
 function take(cls, ip, now) {
     if (DISABLED) return { allowed: true, retryAfter: 0 };
-    const conf = CLASSES[cls];
+    const conf = CLASSES[/** @type {BucketClass} */ (cls)];
     if (!conf) return { allowed: true, retryAfter: 0 };
     const key = cls + ':' + ip;
     let b = buckets.get(key);
@@ -68,10 +77,14 @@ function take(cls, ip, now) {
 }
 
 // Poda cubetas llenas e inactivas (vuelven al estado inicial igualmente).
+/**
+ * @param {number} now
+ * @param {number} [idleMs]
+ */
 function prune(now, idleMs = 10 * 60 * 1000) {
     for (const [key, b] of buckets) {
         const cls = key.slice(0, key.indexOf(':'));
-        const conf = CLASSES[cls];
+        const conf = CLASSES[/** @type {BucketClass} */ (cls)];
         if (conf && b.tokens >= conf.capacity && (now - b.last) > idleMs) {
             buckets.delete(key);
         }
