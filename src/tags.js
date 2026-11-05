@@ -6,8 +6,13 @@
  * copiada en server/vendor/shared.js por `node vendor.mjs`, y una prueba falla si se
  * desincronizan.
  */
+/**
+ * @param {unknown} tags
+ * @returns {string[]}
+ */
 export function normalizeTags (tags) {
   if (!Array.isArray(tags)) return []
+  /** @type {string[]} */
   const out = []
   for (const t of tags) {
     if (typeof t !== 'string') continue

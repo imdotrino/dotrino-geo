@@ -9,6 +9,12 @@
  */
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz'
 
+/**
+ * @param {number} lat
+ * @param {number} lng
+ * @param {number} [precision]  caracteres del geohash (default 7)
+ * @returns {string}
+ */
 export function encodeGeohash (lat, lng, precision = 7) {
   let idx = 0
   let bit = 0

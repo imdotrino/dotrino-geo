@@ -37,6 +37,8 @@ jobs:
 
       - run: npm i -g npm@latest
       - run: npm ci
+      # Los tipos antes que nada: una versión que no pasa `tsc --noEmit` no llega a npm.
+      - run: npm run type-check
       # El servidor tiene su propio package.json, y sus pruebas necesitan sus
       # dependencias. Sin esto los tests del bridge se saltaban en CI por no encontrar
       # el pilar — es decir, no probaban nada.

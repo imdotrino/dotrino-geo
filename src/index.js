@@ -30,10 +30,11 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000 // 10 min: pins efímeros por diseño
 /**
  * Crea un cliente del índice geo.
  *
- * @param {object} opts
- * @param {(data:object)=>Promise<{signature:string, publickey:string, chain:object[]}>} opts.signData
- *   Firma del vault. Devuelve el paquete: quién firmó y la cadena que lo prueba.
- * @param {()=>Promise<string>} opts.getPublicKeyJwk
+ * @param {object} [opts]   `signData` y `getPublicKeyJwk` son obligatorias: se comprueba al crear.
+ * @param {(data:object)=>Promise<string | {signature:string, publickey?:string, chain?:object[]}>} [opts.signData]
+ *   Firma del vault. Devuelve el paquete: quién firmó y la cadena que lo prueba (un vault
+ *   viejo, solo la firma).
+ * @param {()=>Promise<string>} [opts.getPublicKeyJwk]
  *   MI IDENTIDAD (`profileId`), no la llave de este aparato: si pasas la del aparato,
  *   publicar desde el teléfono y desde el PC crea dos autores distintos.
  * @param {string} [opts.baseUrl]                           default https://geo.dotrino.com
@@ -43,8 +44,9 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
   if (typeof signData !== 'function' || typeof getPublicKeyJwk !== 'function') {
     throw new Error('dotrino-geo: signData and getPublicKeyJwk are required (inject them from the identity vault)')
   }
-  const doFetch = f || (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null)
-  if (!doFetch) throw new Error('dotrino-geo: no fetch available; inject it in opts.fetch')
+  const maybeFetch = f || (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null)
+  if (!maybeFetch) throw new Error('dotrino-geo: no fetch available; inject it in opts.fetch')
+  const doFetch = maybeFetch
   const base = baseUrl.replace(/\/+$/, '')
   // PARA QUIÉN va lo que firmamos. Sale del `baseUrl` y no de una constante: quien
   // autohospeda su índice tiene otro destinatario, y tenerlo fijo haría que un pin firmado
@@ -63,15 +65,17 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
    * @param {string[]} [p.tags]           etiquetas para búsqueda (máx 10, slug ≤32). Se buscan por overlap.
    * @param {number} [p.ttlMs]            vida del pin (default 10 min)
    * @param {number} [p.geohashPrecision] precisión del geohash público (default 7)
+   * @param {number} [p.now]            reloj inyectable (pruebas)
    * @returns {Promise<{ok:true, expiresAt:number, geohash:string}>}
    */
-  async function publishPin ({ lat, lng, payload = {}, tags, ttlMs = DEFAULT_TTL_MS, geohashPrecision = 7, now } = {}) {
+  async function publishPin ({ lat, lng, payload = {}, tags, ttlMs = DEFAULT_TTL_MS, geohashPrecision = 7, now } = /** @type {{ lat: number, lng: number }} */ ({})) {
     assertLatLng(lat, lng)
     // `publickey` ES LA IDENTIDAD, no la llave del aparato que firma. Antes se ponía la
     // del aparato, así que publicar desde el teléfono y desde el PC creaba dos «autores»
     // distintos para la misma persona — y quien mirara el mapa vería dos.
-    const publickey = await getPublicKeyJwk()
+    const publickey = await /** @type {NonNullable<typeof getPublicKeyJwk>} */ (getPublicKeyJwk)()  // comprobada al crear
     const ts = now ?? Date.now()
+    /** @type {Record<string, unknown>} */
     const data = {
       publickey,
       aud,
@@ -97,9 +101,9 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
    * @param {number} [q.limit]   default 50, máx 200
    * @param {string} [q.filter]  JSON string opcional para filtrar por payload (igualdad exacta de claves)
    * @param {string[]} [q.tags]  buscar pins que tengan ALGUNA de estas etiquetas (overlap)
-   * @returns {Promise<{pins:Array<{publickey,lat,lng,geohash,payload,tags,distanceMeters,expiresAt}>}>}
+   * @returns {Promise<{pins:Array<{publickey:string,lat:number,lng:number,geohash:string,payload:object,tags:string[],distanceMeters:number,expiresAt:number}>}>}
    */
-  async function queryRadius ({ lat, lng, radiusMeters, limit = 50, filter, tags } = {}) {
+  async function queryRadius ({ lat, lng, radiusMeters, limit = 50, filter, tags } = /** @type {{ lat: number, lng: number, radiusMeters: number }} */ ({})) {
     assertLatLng(lat, lng)
     if (!(radiusMeters > 0)) throw new Error('dotrino-geo: radiusMeters must be > 0')
     const params = new URLSearchParams({
@@ -114,10 +118,11 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
 
   /**
    * Retira el pin de esta identidad antes de que expire (firma un tombstone).
+   * @param {{ now?: number }} [o]
    * @returns {Promise<{ok:true}>}
    */
   async function removePin ({ now } = {}) {
-    const publickey = await getPublicKeyJwk()
+    const publickey = await /** @type {NonNullable<typeof getPublicKeyJwk>} */ (getPublicKeyJwk)()  // comprobada al crear
     const data = { publickey, aud, action: 'remove', issuedAt: now ?? Date.now() }
     // MANDABA EL PAQUETE ENTERO EN `signature`. `signData` devuelve `{signature, publickey,
     // chain}` desde hace versiones, y aquí se metía ese objeto donde el servidor espera la
@@ -126,9 +131,13 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
     return sendSigned('DELETE', data)
   }
 
-  /** Firma `data` y lo manda a /pins: el mismo sobre para publicar y para retirar. */
+  /**
+   * Firma `data` y lo manda a /pins: el mismo sobre para publicar y para retirar.
+   * @param {'PUT' | 'DELETE'} method
+   * @param {object} data
+   */
   async function sendSigned (method, data) {
-    const sig = await signData(data)
+    const sig = await /** @type {NonNullable<typeof signData>} */ (signData)(data)  // comprobada al crear
     // Un vault viejo devuelve solo la firma; uno nuevo, el paquete con quién firmó y la
     // cadena que prueba que ese firmante habla por esta identidad.
     const envelope = typeof sig === 'string'
@@ -147,17 +156,21 @@ export function createGeoClient ({ signData, getPublicKeyJwk, baseUrl = DEFAULT_
 
 // ----- helpers -----------------------------------------------------------
 
+/** @param {unknown} lat @param {unknown} lng */
 function assertLatLng (lat, lng) {
   if (typeof lat !== 'number' || lat < -90 || lat > 90) throw new Error('dotrino-geo: invalid lat')
   if (typeof lng !== 'number' || lng < -180 || lng > 180) throw new Error('dotrino-geo: invalid lng')
 }
 
+/** @param {number} n @param {number} decimals */
 function round (n, decimals) {
   const f = Math.pow(10, decimals)
   return Math.round(n * f) / f
 }
 
+/** @param {Response} res @returns {Promise<any>} el JSON del índice; cada llamador documenta su forma */
 async function handle (res) {
+  /** @type {any} */
   let body = null
   try { body = await res.json() } catch (_) {}
   if (!res.ok) {

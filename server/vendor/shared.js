@@ -10,15 +10,20 @@
  * Fuente ÚNICA dentro de este repo: el servidor la recibe copiada en
  * server/vendor/shared.js por `node vendor.mjs` (una prueba falla si se desincronizan).
  */
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function canonicalStringify (value) {
   if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value)
+    // `undefined` da undefined, como JSON.stringify: el tipo lo dice (igual que el original).
+    return /** @type {string} */ (JSON.stringify(value))
   }
   if (Array.isArray(value)) {
     return '[' + value.map(canonicalStringify).join(',') + ']'
   }
   const keys = Object.keys(value).sort()
-  const parts = keys.map(k => JSON.stringify(k) + ':' + canonicalStringify(value[k]))
+  const parts = keys.map(k => JSON.stringify(k) + ':' + canonicalStringify(/** @type {Record<string, unknown>} */ (value)[k]))
   return '{' + parts.join(',') + '}'
 }
 
@@ -31,8 +36,13 @@ function canonicalStringify (value) {
  * copiada en server/vendor/shared.js por `node vendor.mjs`, y una prueba falla si se
  * desincronizan.
  */
+/**
+ * @param {unknown} tags
+ * @returns {string[]}
+ */
 function normalizeTags (tags) {
   if (!Array.isArray(tags)) return []
+  /** @type {string[]} */
   const out = []
   for (const t of tags) {
     if (typeof t !== 'string') continue
