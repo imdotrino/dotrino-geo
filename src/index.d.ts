@@ -1,6 +1,6 @@
 export interface GeoClientOptions {
-  /** Firma canónica → base64. Inyectada desde el vault (`id.signData`). */
-  signData: (data: object) => Promise<string>
+  /** Firma de la bóveda (`id.signData`): el paquete firmado (o la firma suelta, base64). */
+  signData: (data: object) => Promise<string | { signature: string; publickey?: string; chain?: object[] }>
   /** Pubkey JWK string. Inyectada desde el vault. */
   getPublicKeyJwk: () => Promise<string>
   /** Default https://geo.dotrino.com */
